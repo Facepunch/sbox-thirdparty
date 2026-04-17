@@ -43,29 +43,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Windows: MSVC for compilation, MSYS2 (MSYS mode, no MinGW) purely for
-      # bash/make/perl to drive the configure script. configure detects cl.exe
-      # via --target=x86_64-win64-vs17 and produces a MSVC-compatible vpx.lib.
-      - uses: ./.github/actions/setup-msvc
-        if: runner.os == 'Windows'
-
-      # NASM for x86-64 asm kernels — installed before MSYS2 so it is visible
-      # on the inherited Windows PATH inside the MSYS2 shell.
-      - name: Install NASM (Windows)
-        if: matrix.platform == 'win64'
-        shell: pwsh
-        run: |
-          choco install nasm -y --no-progress
-          echo "C:\Program Files\NASM" >> $env:GITHUB_PATH
-
-      # MSYS mode gives bash/make/perl without pulling in MinGW's GCC/NASM.
-      # MSVC tools (cl, link, lib, ml64) come from the ilammy/msvc-dev-cmd PATH.
+      # Windows: use MSYS2 MINGW64 with its own GCC + NASM.
+      # libvpx is pure C — MinGW-compiled COFF .a files link fine with MSVC.
+      # This avoids VCTargetsPath/msbuild env-var mangling entirely.
       - uses: msys2/setup-msys2@v2
         if: runner.os == 'Windows'
         with:
-          msystem: MSYS
-          install: make perl diffutils
-          path-type: inherit
+          msystem: MINGW64
+          install: make perl diffutils mingw-w64-x86_64-gcc mingw-w64-x86_64-nasm
+          path-type: minimal
 
       - name: Install build tools (Linux)
         if: runner.os == 'Linux'
@@ -87,30 +73,23 @@ jobs:
           make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
           make install
 
-      - name: Build (Windows — MSYS2 + MSVC)
+      - name: Build (Windows — MSYS2 MinGW64)
         if: runner.os == 'Windows'
         shell: msys2 {0}
-        env:
-          # Prevent MSYS2 from converting Windows paths in env vars (e.g. VCTargetsPath)
-          # before they reach native msbuild.exe, which would cause MSB4019 errors.
-          MSYS_NO_PATHCONV: 1
         run: |
           DIST="$(cygpath -u "$GITHUB_WORKSPACE")/dist"
-          mkdir -p "$DIST/lib"
           cd src
           ./configure \
-            --target=x86_64-win64-vs17 \
+            --target=x86_64-win64-gcc \
             --enable-static --disable-shared \
             --disable-examples --disable-tools \
             --disable-docs --disable-unit-tests \
             --enable-vp9 --disable-vp8 \
             --prefix="$DIST"
-          make
+          make -j$(nproc)
           make install
-          # vs17 installs to lib/x64/vpxmd.lib — normalise to lib/vpx.lib
-          mv "$DIST/lib/x64/vpxmd.lib" "$DIST/lib/vpx.lib"
-          mkdir -p "$DIST/include/vpx"
-          cp vpx/*.h "$DIST/include/vpx/"
+          # Rename to vpx.lib for MSVC linker compatibility
+          mv "$DIST/lib/libvpx.a" "$DIST/lib/vpx.lib"
 
       - uses: ./.github/actions/collect-package-upload
         with:
