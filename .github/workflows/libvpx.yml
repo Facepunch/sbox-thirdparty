@@ -43,15 +43,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Windows: use MSYS2 MINGW64 with its own GCC + NASM.
-      # libvpx is pure C — MinGW-compiled COFF .a files link fine with MSVC.
-      # This avoids VCTargetsPath/msbuild env-var mangling entirely.
+      # Windows: set up MSVC environment so cl.exe is in PATH.
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      # Windows: use MSYS2 (MSYS subsystem) for bash/make/perl/nasm.
+      # path-type: inherit so the MSYS2 shell sees cl.exe from the MSVC PATH above.
       - uses: msys2/setup-msys2@v2
         if: runner.os == 'Windows'
         with:
-          msystem: MINGW64
-          install: make perl diffutils mingw-w64-x86_64-gcc mingw-w64-x86_64-nasm
-          path-type: minimal
+          msystem: MSYS
+          install: make perl diffutils nasm
+          path-type: inherit
 
       - name: Install build tools (Linux)
         if: runner.os == 'Linux'
@@ -73,14 +76,14 @@ jobs:
           make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
           make install
 
-      - name: Build (Windows — MSYS2 MinGW64)
+      - name: Build (Windows — MSVC via MSYS2)
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
           DIST="$(cygpath -u "$GITHUB_WORKSPACE")/dist"
           cd src
           ./configure \
-            --target=x86_64-win64-gcc \
+            --target=x86_64-win64-vs17 \
             --enable-static --disable-shared \
             --disable-examples --disable-tools \
             --disable-docs --disable-unit-tests \
@@ -88,8 +91,6 @@ jobs:
             --prefix="$DIST"
           make -j$(nproc)
           make install
-          # Rename to vpx.lib for MSVC linker compatibility
-          mv "$DIST/lib/libvpx.a" "$DIST/lib/vpx.lib"
 
       - uses: ./.github/actions/collect-package-upload
         with:
