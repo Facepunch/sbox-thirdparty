@@ -52,11 +52,17 @@ jobs:
 
       - name: Install cmake + ninja + openssl (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build libssl-dev
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build libssl-dev libpsl-dev libidn2-dev
 
-      - name: Install cmake + ninja (macOS)
+      - name: Install cmake + ninja + deps (macOS)
         if: runner.os == 'macOS'
-        run: brew install cmake ninja
+        run: brew install cmake ninja libpsl libidn2
+
+      - name: Install deps via vcpkg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install libpsl:x64-windows-static-md libidn2:x64-windows-static-md
 
       - name: Clone libcurl ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.curl_tag }} https://github.com/curl/curl.git src
@@ -92,8 +98,6 @@ jobs:
             -DUSE_NGTCP2=OFF
           cmake --build src/build --parallel
           cmake --install src/build
-
-          # Bundle the OpenSSL static libs into dist/lib/ so the VPC can link them.
           SSL_A=$(find /usr/lib -name "libssl.a" 2>/dev/null | head -1)
           CRYPTO_A=$(find /usr/lib -name "libcrypto.a" 2>/dev/null | head -1)
           echo "libssl.a  : $SSL_A"
@@ -111,6 +115,8 @@ jobs:
           cmake -S src -B src\build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
             -DBUILD_SHARED_LIBS=OFF `
             -DBUILD_TESTING=OFF `
             -DCURL_STATICLIB=ON `
