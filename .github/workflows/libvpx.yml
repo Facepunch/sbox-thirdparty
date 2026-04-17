@@ -65,6 +65,7 @@ jobs:
         with:
           msystem: MSYS
           install: make perl diffutils
+          path-type: inherit
 
       - name: Install build tools (Linux)
         if: runner.os == 'Linux'

@@ -31,3 +31,10 @@ runs:
             }
           }
         }
+
+    - name: Strip Git usr/bin from PATH
+      shell: pwsh
+      run: |
+        # Meson detects and rejects GNU link.exe from Git\usr\bin — remove it entirely.
+        $clean = ($env:PATH -split ';' | Where-Object { $_ -notlike '*Git\usr\bin*' }) -join ';'
+        "PATH=$clean" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8

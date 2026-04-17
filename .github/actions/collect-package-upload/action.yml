@@ -15,13 +15,21 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Collect
+    - name: Collect (Unix)
+      if: runner.os != 'Windows'
       shell: bash
       run: |
         mkdir -p out/include out/lib
         cp -r dist/include/. out/include/
         find dist -name "*.a" -exec cp {} out/lib/ \;
-        find dist -name "*.lib" -exec cp {} out/lib/ \;
+
+    - name: Collect (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force out\include, out\lib | Out-Null
+        Copy-Item -Recurse dist\include\* out\include\
+        Get-ChildItem dist -Recurse -Include *.lib,*.a | Copy-Item -Destination out\lib\
 
     - name: Package (Unix)
       if: runner.os != 'Windows'
