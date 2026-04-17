@@ -97,24 +97,26 @@ jobs:
           make dist
 
       # Windows step 2: compile the generated .vcxproj with MSBuild (MSVC from setup-msvc).
+      # vpx.vcxproj lives at the root of the build dir (not inside the dist subdir).
+      # make dist creates a vpx-* subdir containing pre-generated headers.
       - name: Build with MSBuild (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Set-Location build
-          # make dist creates a directory like vpx-vp9-nodocs-x86_64-win64md-vs17-v1.16.0
-          $distDir = (Get-ChildItem -Directory | Where-Object { $_.Name -like "vpx-*" } | Select-Object -First 1).FullName
-          Write-Host "Dist dir: $distDir"
-          Set-Location $distDir
+          # vpx.vcxproj is at the root of the build directory
           msbuild vpx.vcxproj /p:Configuration=Release /p:Platform=x64 /m /v:m
-          # Output lib is named vpxmd.lib (/MD) or vpxmt.lib (/MT); rename to vpx.lib
+          # lib output is at x64/Release/vpxmd.lib (or vpxmt.lib); rename to vpx.lib
           $lib = Get-ChildItem -Recurse -Filter "vpx*.lib" | Where-Object { $_.DirectoryName -match "Release" } | Select-Object -First 1
           Write-Host "Found lib: $($lib.FullName)"
+          # headers are inside the dist subdir created by make dist
+          $distDir = (Get-ChildItem -Directory | Where-Object { $_.Name -like "vpx-*" } | Select-Object -First 1).FullName
+          Write-Host "Dist dir: $distDir"
           $out = "$env:GITHUB_WORKSPACE/dist"
           New-Item -ItemType Directory -Force "$out/lib"
           New-Item -ItemType Directory -Force "$out/include/vpx"
           Copy-Item $lib.FullName "$out/lib/vpx.lib"
-          Copy-Item "include\vpx\*" "$out/include/vpx/"
+          Copy-Item "$distDir/include/vpx/*" "$out/include/vpx/"
 
       - uses: ./.github/actions/collect-package-upload
         with:
