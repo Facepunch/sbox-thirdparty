@@ -1,0 +1,39 @@
+name: Collect, Package and Upload
+description: Copies dist/ into out/, archives it, and uploads as a workflow artifact.
+
+inputs:
+  lib_name:
+    description: Library name used in the archive filename (e.g. libopus)
+    required: true
+  lib_version:
+    description: Library version string (e.g. v1.5.2)
+    required: true
+  platform:
+    description: Platform identifier (e.g. win64)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Collect
+      shell: bash
+      run: |
+        mkdir -p out/include out/lib
+        cp -r dist/include/. out/include/
+        find dist -name "*.a" -exec cp {} out/lib/ \;
+        find dist -name "*.lib" -exec cp {} out/lib/ \;
+
+    - name: Package (Unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: tar czf "${{ inputs.lib_name }}-${{ inputs.lib_version }}-${{ inputs.platform }}.tar.gz" -C out .
+
+    - name: Package (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: Compress-Archive -Path out\* -DestinationPath "${{ inputs.lib_name }}-${{ inputs.lib_version }}-${{ inputs.platform }}.zip"
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.lib_name }}-${{ inputs.platform }}
+        path: ${{ inputs.lib_name }}-${{ inputs.lib_version }}-${{ inputs.platform }}.*

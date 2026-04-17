@@ -1,0 +1,107 @@
+name: Build dav1d
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'dav1d tag (e.g. 1.5.3)'
+        required: true
+        default: '1.5.3'
+  push:
+    tags: ['dav1d-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#dav1d-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=dav1d-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Install NASM (Windows)
+        if: matrix.platform == 'win64'
+        shell: pwsh
+        run: |
+          choco install nasm -y --no-progress
+          echo "C:\Program Files\NASM" >> $env:GITHUB_PATH
+
+      - name: Install NASM (Linux x64)
+        if: matrix.platform == 'linuxsteamrt64'
+        run: sudo apt-get install -y nasm
+
+      - name: Install meson + ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y ninja-build && pip3 install meson
+
+      - name: Install meson + ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install meson ninja
+
+      - name: Install meson + ninja (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pip install meson ninja
+
+      - name: Clone dav1d ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://code.videolan.org/videolan/dav1d.git src
+
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          meson setup src/build src \
+            --default-library=static --buildtype=release \
+            -Denable_tools=false -Denable_tests=false \
+            --prefix="$GITHUB_WORKSPACE/dist"
+          meson compile -C src/build
+          meson install -C src/build
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          meson setup src\build src `
+            --default-library=static --buildtype=release `
+            -Denable_tools=false -Denable_tests=false `
+            --prefix="$env:GITHUB_WORKSPACE\dist"
+          meson compile -C src\build
+          meson install -C src\build
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: dav1d
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "dav1d ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit

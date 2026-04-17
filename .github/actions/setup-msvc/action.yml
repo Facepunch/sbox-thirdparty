@@ -1,0 +1,33 @@
+name: Setup MSVC (amd64)
+description: Runs vcvarsall.bat amd64 and exports the resulting environment to GITHUB_ENV / GITHUB_PATH.
+
+runs:
+  using: composite
+  steps:
+    - name: Setup MSVC environment
+      shell: pwsh
+      run: |
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $vsPath = & $vswhere -latest `
+          -requires Microsoft.VisualCpp.Tools.HostX64.TargetX64 `
+          -property installationPath
+        if (-not $vsPath) { Write-Error "Visual Studio not found"; exit 1 }
+
+        $vcvarsall = Join-Path $vsPath "VC\Auxiliary\Build\vcvarsall.bat"
+        Write-Host "vcvarsall: $vcvarsall"
+
+        # Run vcvarsall and capture the resulting environment
+        cmd /c "`"$vcvarsall`" amd64 >nul 2>&1 && set" | ForEach-Object {
+          if ($_ -match '^([^=]+)=(.*)$') {
+            $name  = $Matches[1]
+            $value = $Matches[2]
+            if ($name -ieq 'PATH') {
+              # Prepend new PATH entries so cl.exe / link.exe take priority
+              $value -split ';' | Where-Object { $_ } | ForEach-Object {
+                Add-Content -Path $env:GITHUB_PATH -Value $_
+              }
+            } else {
+              Add-Content -Path $env:GITHUB_ENV -Value "$name=$value"
+            }
+          }
+        }

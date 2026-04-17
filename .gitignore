@@ -1,0 +1,7 @@
+# Build outputs — never commit these
+*-dist/
+*-src/
+install/
+artifacts/
+*.tar.gz
+*.zip

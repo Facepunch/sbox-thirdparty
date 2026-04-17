@@ -1,0 +1,118 @@
+name: Build libvpx
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'libvpx tag (e.g. v1.16.0)'
+        required: true
+        default: 'v1.16.0'
+  push:
+    tags: ['libvpx-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#libvpx-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=libvpx-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      # Windows: MSVC for compilation, MSYS2 (MSYS mode, no MinGW) purely for
+      # bash/make/perl to drive the configure script. configure detects cl.exe
+      # via --target=x86_64-win64-vs17 and produces a MSVC-compatible vpx.lib.
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      # NASM for x86-64 asm kernels — installed before MSYS2 so it is visible
+      # on the inherited Windows PATH inside the MSYS2 shell.
+      - name: Install NASM (Windows)
+        if: matrix.platform == 'win64'
+        shell: pwsh
+        run: |
+          choco install nasm -y --no-progress
+          echo "C:\Program Files\NASM" >> $env:GITHUB_PATH
+
+      # MSYS mode gives bash/make/perl without pulling in MinGW's GCC/NASM.
+      # MSVC tools (cl, link, lib, ml64) come from the ilammy/msvc-dev-cmd PATH.
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: MSYS
+          install: make perl diffutils
+
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y make nasm
+
+      - name: Clone libvpx ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/webmproject/libvpx.git src
+
+      - name: Build (Linux / macOS)
+        if: runner.os != 'Windows'
+        run: |
+          cd src
+          ./configure \
+            --prefix="$GITHUB_WORKSPACE/dist" \
+            --enable-static --disable-shared \
+            --disable-examples --disable-tools \
+            --disable-docs --disable-unit-tests \
+            --enable-vp9 --disable-vp8
+          make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+          make install
+
+      - name: Build (Windows — MSYS2 shell + MSVC toolchain)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: |
+          DIST="$(cygpath -u "$GITHUB_WORKSPACE")/dist"
+          mkdir -p "$DIST"
+          cd src
+          ./configure \
+            --prefix="$DIST" \
+            --target=x86_64-win64-vs17 \
+            --enable-static --disable-shared \
+            --disable-examples --disable-tools \
+            --disable-docs --disable-unit-tests \
+            --enable-vp9 --disable-vp8
+          make -j$(nproc)
+          make install
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: libvpx
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "libvpx ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit
