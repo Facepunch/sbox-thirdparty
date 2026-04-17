@@ -43,18 +43,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Windows: set up MSVC environment so cl.exe is in PATH.
-      - uses: ./.github/actions/setup-msvc
-        if: runner.os == 'Windows'
-
-      # Windows: use MSYS2 (MSYS subsystem) for bash/make/perl/nasm.
-      # path-type: inherit so the MSYS2 shell sees cl.exe from the MSVC PATH above.
+      # Windows: set up MSYS2 FIRST (before MSVC) so paccache runs before the
+      # MSVC environment variables inflate the process environment beyond what
+      # xargs can handle. path-type: inherit is evaluated per shell invocation,
+      # so later steps that run after setup-msvc will still see cl.exe.
       - uses: msys2/setup-msys2@v2
         if: runner.os == 'Windows'
         with:
           msystem: MSYS
           install: make perl diffutils nasm
           path-type: inherit
+
+      # Windows: set up MSVC environment (written to GITHUB_ENV / GITHUB_PATH,
+      # picked up by all subsequent steps including MSYS2 shell invocations).
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
 
       - name: Install build tools (Linux)
         if: runner.os == 'Linux'
@@ -76,21 +79,42 @@ jobs:
           make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
           make install
 
-      - name: Build (Windows — MSVC via MSYS2)
+      # Windows step 1: configure generates MSBuild .vcxproj (needs bash/perl/nasm/make).
+      # make dist bundles the generated sources + project into a self-contained directory.
+      # cl.exe is visible here via path-type: inherit (setup-msvc ran above).
+      - name: Configure + generate MSBuild project (Windows)
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
-          DIST="$(cygpath -u "$GITHUB_WORKSPACE")/dist"
-          cd src
-          ./configure \
+          mkdir -p build && cd build
+          ../src/configure \
             --target=x86_64-win64-vs17 \
             --enable-static --disable-shared \
             --disable-examples --disable-tools \
             --disable-docs --disable-unit-tests \
             --enable-vp9 --disable-vp8 \
-            --prefix="$DIST"
-          make -j$(nproc)
-          make install
+            --as=nasm
+          make dist
+
+      # Windows step 2: compile the generated .vcxproj with MSBuild (MSVC from setup-msvc).
+      - name: Build with MSBuild (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-Location build
+          # make dist creates a directory like vpx-vp9-nodocs-x86_64-win64md-vs17-v1.16.0
+          $distDir = (Get-ChildItem -Directory | Where-Object { $_.Name -like "vpx-*" } | Select-Object -First 1).FullName
+          Write-Host "Dist dir: $distDir"
+          Set-Location $distDir
+          msbuild vpx.vcxproj /p:Configuration=Release /p:Platform=x64 /m /v:m
+          # Output lib is named vpxmd.lib (/MD) or vpxmt.lib (/MT); rename to vpx.lib
+          $lib = Get-ChildItem -Recurse -Filter "vpx*.lib" | Where-Object { $_.DirectoryName -match "Release" } | Select-Object -First 1
+          Write-Host "Found lib: $($lib.FullName)"
+          $out = "$env:GITHUB_WORKSPACE/dist"
+          New-Item -ItemType Directory -Force "$out/lib"
+          New-Item -ItemType Directory -Force "$out/include/vpx"
+          Copy-Item $lib.FullName "$out/lib/vpx.lib"
+          Copy-Item "include\vpx\*" "$out/include/vpx/"
 
       - uses: ./.github/actions/collect-package-upload
         with:
