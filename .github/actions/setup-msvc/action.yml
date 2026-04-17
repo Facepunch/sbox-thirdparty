@@ -1,5 +1,5 @@
 name: Setup MSVC (amd64)
-description: Runs vcvarsall.bat amd64 and exports the resulting environment to GITHUB_ENV / GITHUB_PATH.
+description: Runs vcvarsall.bat amd64 and exports the resulting environment to GITHUB_ENV.
 
 runs:
   using: composite
@@ -22,14 +22,13 @@ runs:
             $name  = $Matches[1]
             $value = $Matches[2]
             if ($name -ieq 'PATH') {
-              # Prepend new PATH entries (filter out Git\usr\bin to keep GNU link.exe off PATH)
-              $value -split ';' | Where-Object { $_ -and $_ -notlike '*Git\usr\bin*' } | ForEach-Object {
-                Add-Content -Path $env:GITHUB_PATH -Value $_
-              }
+              # Export PATH as a full replacement (preserving vcvarsall order so VS tools
+              # appear before legacy Windows tools). Filter Git\usr\bin to prevent GNU
+              # link.exe from shadowing MSVC link.exe.
+              $filtered = ($value -split ';' | Where-Object { $_ -and $_ -notlike '*Git\usr\bin*' }) -join ';'
+              Add-Content -Path $env:GITHUB_ENV -Value "PATH=$filtered"
             } else {
               Add-Content -Path $env:GITHUB_ENV -Value "$name=$value"
             }
           }
         }
-
-

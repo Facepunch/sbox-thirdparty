@@ -104,8 +104,12 @@ jobs:
         shell: pwsh
         run: |
           Set-Location build
+          # Use VS2022 MSBuild (not the legacy .NET Framework one that lacks VCTargetsPath)
+          $msbuild = "${env:VSINSTALLDIR}MSBuild\Current\Bin\MSBuild.exe"
+          Write-Host "MSBuild: $msbuild"
           # vpx.vcxproj is at the root of the build directory
-          msbuild vpx.vcxproj /p:Configuration=Release /p:Platform=x64 /m /v:m
+          & $msbuild vpx.vcxproj /p:Configuration=Release /p:Platform=x64 /m /v:m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # lib output is at x64/Release/vpxmd.lib (or vpxmt.lib); rename to vpx.lib
           $lib = Get-ChildItem -Recurse -Filter "vpx*.lib" | Where-Object { $_.DirectoryName -match "Release" } | Select-Object -First 1
           Write-Host "Found lib: $($lib.FullName)"
