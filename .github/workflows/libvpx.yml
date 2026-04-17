@@ -103,12 +103,16 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cd src
-          msbuild vpx.sln /p:Configuration=Release /p:Platform=x64 /m /v:m
+          $ErrorActionPreference = 'Stop'
+          $src  = "$env:GITHUB_WORKSPACE\src"
           $dist = "$env:GITHUB_WORKSPACE\dist"
+          $msbuild = "$env:VSINSTALLDIR\MSBuild\Current\Bin\amd64\MSBuild.exe"
+          Write-Host "src contents:"; Get-ChildItem $src -Name
+          Write-Host "MSBuild: $msbuild"
+          & $msbuild "$src\vpx.sln" /p:Configuration=Release /p:Platform=x64 /m /v:m
           New-Item -ItemType Directory -Force "$dist\include\vpx", "$dist\lib" | Out-Null
-          Get-ChildItem vpx -Filter "*.h" | Copy-Item -Destination "$dist\include\vpx\"
-          $lib = Get-ChildItem -Recurse -Filter "vpx.lib" | Select-Object -First 1
+          Get-ChildItem "$src\vpx" -Filter "*.h" | Copy-Item -Destination "$dist\include\vpx\"
+          $lib = Get-ChildItem -Path $src -Recurse -Filter "vpx.lib" | Select-Object -First 1
           if (-not $lib) { Write-Error "vpx.lib not found"; exit 1 }
           Copy-Item $lib.FullName "$dist\lib\"
 
