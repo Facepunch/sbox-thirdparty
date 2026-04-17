@@ -130,7 +130,8 @@ jobs:
             -DCURL_DISABLE_FILE=ON `
             -DCURL_ZLIB=OFF `
             -DUSE_NGHTTP2=OFF `
-            -DUSE_NGTCP2=OFF
+            -DUSE_NGTCP2=OFF `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
           cmake --build src\build --parallel
           cmake --install src\build
 
