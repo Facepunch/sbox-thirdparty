@@ -52,26 +52,11 @@ jobs:
 
       - name: Install cmake + ninja + openssl (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build libssl-dev libpsl-dev libidn2-dev
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build libssl-dev
 
-      - name: Install cmake + ninja + deps (macOS)
+      - name: Install cmake + ninja (macOS)
         if: runner.os == 'macOS'
-        run: brew install cmake ninja libpsl libidn2
-
-      - name: Install deps via vcpkg (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          # Custom triplet: static lib, dynamic CRT (/MD), Release only
-          $tripletDir = "$env:RUNNER_TEMP\vcpkg-triplets"
-          New-Item -ItemType Directory -Force $tripletDir | Out-Null
-          $triplet = "set(VCPKG_TARGET_ARCHITECTURE x64)`nset(VCPKG_CRT_LINKAGE dynamic)`nset(VCPKG_LIBRARY_LINKAGE static)`nset(VCPKG_BUILD_TYPE release)"
-          [IO.File]::WriteAllText("$tripletDir\x64-windows-static-md-rel.cmake", $triplet)
-          # libpsl[core,libidn2] avoids ICU; libidn2 feature must be listed on libpsl itself
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install `
-            "libpsl[core,libidn2]:x64-windows-static-md-rel" `
-            --overlay-triplets=$tripletDir
-          echo "VCPKG_TRIPLET_DIR=$tripletDir" >> $env:GITHUB_ENV
+        run: brew install cmake ninja
 
       - name: Clone libcurl ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.curl_tag }} https://github.com/curl/curl.git src
@@ -104,7 +89,9 @@ jobs:
             -DCURL_DISABLE_FILE=ON \
             -DCURL_ZLIB=OFF \
             -DUSE_NGHTTP2=OFF \
-            -DUSE_NGTCP2=OFF
+            -DUSE_NGTCP2=OFF \
+            -DCURL_USE_LIBPSL=OFF \
+            -DUSE_LIBIDN2=OFF
           cmake --build src/build --parallel
           cmake --install src/build
           SSL_A=$(find /usr/lib -name "libssl.a" 2>/dev/null | head -1)
@@ -124,13 +111,12 @@ jobs:
           cmake -S src -B src\build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md-rel `
-            -DVCPKG_OVERLAY_TRIPLETS="$env:VCPKG_TRIPLET_DIR" `
             -DBUILD_SHARED_LIBS=OFF `
             -DBUILD_TESTING=OFF `
             -DCURL_STATICLIB=ON `
             -DCURL_USE_SCHANNEL=ON `
+            -DCURL_USE_LIBPSL=OFF `
+            -DUSE_LIBIDN2=OFF `
             -DCURL_DISABLE_LDAP=ON `
             -DCURL_DISABLE_SMTP=ON `
             -DCURL_DISABLE_IMAP=ON `
@@ -182,7 +168,9 @@ jobs:
             -DCURL_DISABLE_FILE=ON \
             -DCURL_ZLIB=OFF \
             -DUSE_NGHTTP2=OFF \
-            -DUSE_NGTCP2=OFF
+            -DUSE_NGTCP2=OFF \
+            -DCURL_USE_LIBPSL=OFF \
+            -DUSE_LIBIDN2=OFF
           cmake --build src/build --parallel
           cmake --install src/build
 
