@@ -58,11 +58,34 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install cmake ninja libpsl libidn2
 
+      - name: Setup vcpkg binary caching (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
       - name: Install deps via vcpkg (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install libpsl:x64-windows-static-md libidn2:x64-windows-static-md
+          # Custom triplet: static lib, dynamic CRT (/MD), Release only
+          $tripletDir = "$env:RUNNER_TEMP\vcpkg-triplets"
+          New-Item -ItemType Directory -Force $tripletDir | Out-Null
+          @"
+set(VCPKG_TARGET_ARCHITECTURE x64)
+set(VCPKG_CRT_LINKAGE dynamic)
+set(VCPKG_LIBRARY_LINKAGE static)
+set(VCPKG_BUILD_TYPE release)
+"@ | Out-File -Encoding utf8 "$tripletDir\x64-windows-static-md-rel.cmake"
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install `
+            libpsl:x64-windows-static-md-rel `
+            libidn2:x64-windows-static-md-rel `
+            --overlay-triplets=$tripletDir
+          echo "VCPKG_TRIPLET_DIR=$tripletDir" >> $env:GITHUB_ENV
 
       - name: Clone libcurl ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.curl_tag }} https://github.com/curl/curl.git src
@@ -116,7 +139,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md-rel `
+            -DVCPKG_OVERLAY_TRIPLETS="$env:VCPKG_TRIPLET_DIR" `
             -DBUILD_SHARED_LIBS=OFF `
             -DBUILD_TESTING=OFF `
             -DCURL_STATICLIB=ON `
