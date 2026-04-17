@@ -87,34 +87,30 @@ jobs:
           make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
           make install
 
-      - name: Configure (Windows — MSYS2 shell)
+      - name: Build (Windows — MSYS2 + MSVC)
         if: runner.os == 'Windows'
         shell: msys2 {0}
+        env:
+          # Prevent MSYS2 from converting Windows paths in env vars (e.g. VCTargetsPath)
+          # before they reach native msbuild.exe, which would cause MSB4019 errors.
+          MSYS_NO_PATHCONV: 1
         run: |
+          DIST="$(cygpath -u "$GITHUB_WORKSPACE")/dist"
+          mkdir -p "$DIST/lib"
           cd src
           ./configure \
             --target=x86_64-win64-vs17 \
             --enable-static --disable-shared \
             --disable-examples --disable-tools \
             --disable-docs --disable-unit-tests \
-            --enable-vp9 --disable-vp8
-
-      - name: Build and install (Windows — msbuild)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $src  = "$env:GITHUB_WORKSPACE\src"
-          $dist = "$env:GITHUB_WORKSPACE\dist"
-          $msbuild = "$env:VSINSTALLDIR\MSBuild\Current\Bin\amd64\MSBuild.exe"
-          Write-Host "src contents:"; Get-ChildItem $src -Name
-          Write-Host "MSBuild: $msbuild"
-          & $msbuild "$src\vpx.sln" /p:Configuration=Release /p:Platform=x64 /m /v:m
-          New-Item -ItemType Directory -Force "$dist\include\vpx", "$dist\lib" | Out-Null
-          Get-ChildItem "$src\vpx" -Filter "*.h" | Copy-Item -Destination "$dist\include\vpx\"
-          $lib = Get-ChildItem -Path $src -Recurse -Filter "vpx.lib" | Select-Object -First 1
-          if (-not $lib) { Write-Error "vpx.lib not found"; exit 1 }
-          Copy-Item $lib.FullName "$dist\lib\"
+            --enable-vp9 --disable-vp8 \
+            --prefix="$DIST"
+          make
+          make install
+          # vs17 installs to lib/x64/vpxmd.lib — normalise to lib/vpx.lib
+          mv "$DIST/lib/x64/vpxmd.lib" "$DIST/lib/vpx.lib"
+          mkdir -p "$DIST/include/vpx"
+          cp vpx/*.h "$DIST/include/vpx/"
 
       - uses: ./.github/actions/collect-package-upload
         with:
