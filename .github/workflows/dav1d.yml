@@ -87,6 +87,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # Meson rejects GNU link.exe from Git\usr\bin — strip it from PATH first.
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notlike '*Git\usr\bin*' }) -join ';'
           meson setup src\build src `
             --default-library=static --buildtype=release `
             -Denable_tools=false -Denable_tests=false `

@@ -87,24 +87,30 @@ jobs:
           make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
           make install
 
-      - name: Build (Windows — MSYS2 shell + MSVC toolchain)
+      - name: Configure (Windows — MSYS2 shell)
         if: runner.os == 'Windows'
         shell: msys2 {0}
-        env:
-          GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
-          DIST="$(cygpath -u "$GITHUB_WORKSPACE")/dist"
-          mkdir -p "$DIST"
           cd src
           ./configure \
-            --prefix="$DIST" \
             --target=x86_64-win64-vs17 \
             --enable-static --disable-shared \
             --disable-examples --disable-tools \
             --disable-docs --disable-unit-tests \
             --enable-vp9 --disable-vp8
-          make -j$(nproc)
-          make install
+
+      - name: Build and install (Windows — msbuild)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd src
+          msbuild vpx.sln /p:Configuration=Release /p:Platform=x64 /m /v:m
+          $dist = "$env:GITHUB_WORKSPACE\dist"
+          New-Item -ItemType Directory -Force "$dist\include\vpx", "$dist\lib" | Out-Null
+          Get-ChildItem vpx -Filter "*.h" | Copy-Item -Destination "$dist\include\vpx\"
+          $lib = Get-ChildItem -Recurse -Filter "vpx.lib" | Select-Object -First 1
+          if (-not $lib) { Write-Error "vpx.lib not found"; exit 1 }
+          Copy-Item $lib.FullName "$dist\lib\"
 
       - uses: ./.github/actions/collect-package-upload
         with:

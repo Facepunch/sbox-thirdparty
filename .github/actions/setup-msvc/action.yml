@@ -22,8 +22,8 @@ runs:
             $name  = $Matches[1]
             $value = $Matches[2]
             if ($name -ieq 'PATH') {
-              # Prepend new PATH entries so cl.exe / link.exe take priority
-              $value -split ';' | Where-Object { $_ } | ForEach-Object {
+              # Prepend new PATH entries (filter out Git\usr\bin to keep GNU link.exe off PATH)
+              $value -split ';' | Where-Object { $_ -and $_ -notlike '*Git\usr\bin*' } | ForEach-Object {
                 Add-Content -Path $env:GITHUB_PATH -Value $_
               }
             } else {
@@ -32,9 +32,4 @@ runs:
           }
         }
 
-    - name: Strip Git usr/bin from PATH
-      shell: pwsh
-      run: |
-        # Meson detects and rejects GNU link.exe from Git\usr\bin — remove it entirely.
-        $clean = ($env:PATH -split ';' | Where-Object { $_ -notlike '*Git\usr\bin*' }) -join ';'
-        "PATH=$clean" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
