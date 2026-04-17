@@ -41,6 +41,8 @@ jobs:
     name: ${{ matrix.platform }}
 
     steps:
+      - uses: actions/checkout@v4
+
       - uses: ./.github/actions/setup-msvc
         if: runner.os == 'Windows'
 

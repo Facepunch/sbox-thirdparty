@@ -41,6 +41,8 @@ jobs:
     name: ${{ matrix.platform }}
 
     steps:
+      - uses: actions/checkout@v4
+
       - uses: ./.github/actions/setup-msvc
         if: runner.os == 'Windows'
 
@@ -63,7 +65,7 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ninja
 
-      - name: Clone SVT-AV1 ${{ needs.setup.outputs.lib_version }}
+      - name: Clone SVT-AV1${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://gitlab.com/AOMediaCodec/SVT-AV1.git src
 
       - name: Build (Unix)

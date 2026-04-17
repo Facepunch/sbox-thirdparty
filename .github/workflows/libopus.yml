@@ -41,6 +41,8 @@ jobs:
     name: ${{ matrix.platform }}
 
     steps:
+      - uses: actions/checkout@v4
+
       - uses: ./.github/actions/setup-msvc
         if: runner.os == 'Windows'
 
@@ -52,7 +54,7 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ninja
 
-      - name: Clone libopus ${{ needs.setup.outputs.lib_version }}
+      - name: Clone libopus${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/xiph/opus.git src
 
       - name: Build (Unix)

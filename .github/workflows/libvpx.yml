@@ -41,6 +41,8 @@ jobs:
     name: ${{ matrix.platform }}
 
     steps:
+      - uses: actions/checkout@v4
+
       # Windows: MSVC for compilation, MSYS2 (MSYS mode, no MinGW) purely for
       # bash/make/perl to drive the configure script. configure detects cl.exe
       # via --target=x86_64-win64-vs17 and produces a MSVC-compatible vpx.lib.
