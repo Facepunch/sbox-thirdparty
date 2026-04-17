@@ -67,10 +67,9 @@ jobs:
           New-Item -ItemType Directory -Force $tripletDir | Out-Null
           $triplet = "set(VCPKG_TARGET_ARCHITECTURE x64)`nset(VCPKG_CRT_LINKAGE dynamic)`nset(VCPKG_LIBRARY_LINKAGE static)`nset(VCPKG_BUILD_TYPE release)"
           [IO.File]::WriteAllText("$tripletDir\x64-windows-static-md-rel.cmake", $triplet)
-          # libpsl[core] avoids the massive ICU dependency (we don't need Unicode normalization)
+          # libpsl[core,libidn2] avoids ICU; libidn2 feature must be listed on libpsl itself
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install `
-            "libpsl[core]:x64-windows-static-md-rel" `
-            libidn2:x64-windows-static-md-rel `
+            "libpsl[core,libidn2]:x64-windows-static-md-rel" `
             --overlay-triplets=$tripletDir
           echo "VCPKG_TRIPLET_DIR=$tripletDir" >> $env:GITHUB_ENV
 
