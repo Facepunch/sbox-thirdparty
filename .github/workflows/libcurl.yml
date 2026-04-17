@@ -1,0 +1,185 @@
+name: Build libcurl
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'libcurl version with dots (e.g. 8.12.1)'
+        required: true
+        default: '8.12.1'
+  push:
+    tags: ['libcurl-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      curl_tag: ${{ steps.ver.outputs.curl_tag }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#libcurl-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          # curl git tags use underscores: curl-8_12_1
+          CURL_TAG="curl-$(echo "$V" | tr '.' '_')"
+          echo "lib_version=$V"       >> $GITHUB_OUTPUT
+          echo "curl_tag=$CURL_TAG"   >> $GITHUB_OUTPUT
+          echo "release_tag=libcurl-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Install cmake + ninja + openssl (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build libssl-dev
+
+      - name: Install cmake + ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      - name: Clone libcurl ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --branch ${{ needs.setup.outputs.curl_tag }} https://github.com/curl/curl.git src
+
+      # ── Linux ──────────────────────────────────────────────────────────────
+      # Build static libcurl with OpenSSL backend.
+      # After install, copy libssl.a + libcrypto.a into dist/lib so they are
+      # packaged alongside libcurl.a — the sbox VPC links all three.
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_TESTING=OFF \
+            -DCURL_STATICLIB=ON \
+            -DCURL_USE_OPENSSL=ON \
+            -DOPENSSL_USE_STATIC_LIBS=TRUE \
+            -DCURL_DISABLE_LDAP=ON \
+            -DCURL_DISABLE_SMTP=ON \
+            -DCURL_DISABLE_IMAP=ON \
+            -DCURL_DISABLE_POP3=ON \
+            -DCURL_DISABLE_FTP=ON \
+            -DCURL_DISABLE_TELNET=ON \
+            -DCURL_DISABLE_RTSP=ON \
+            -DCURL_DISABLE_DICT=ON \
+            -DCURL_DISABLE_GOPHER=ON \
+            -DCURL_DISABLE_MQTT=ON \
+            -DCURL_DISABLE_FILE=ON \
+            -DCURL_ZLIB=OFF \
+            -DUSE_NGHTTP2=OFF \
+            -DUSE_NGTCP2=OFF
+          cmake --build src/build --parallel
+          cmake --install src/build
+
+          # Bundle the OpenSSL static libs into dist/lib/ so the VPC can link them.
+          SSL_A=$(find /usr/lib -name "libssl.a" 2>/dev/null | head -1)
+          CRYPTO_A=$(find /usr/lib -name "libcrypto.a" 2>/dev/null | head -1)
+          echo "libssl.a  : $SSL_A"
+          echo "libcrypto.a: $CRYPTO_A"
+          [ -n "$SSL_A" ]    && cp "$SSL_A"    "$GITHUB_WORKSPACE/dist/lib/"
+          [ -n "$CRYPTO_A" ] && cp "$CRYPTO_A" "$GITHUB_WORKSPACE/dist/lib/"
+
+      # ── Windows ────────────────────────────────────────────────────────────
+      # Build static libcurl backed by Windows Schannel — no extra DLLs needed.
+      # Consumers must also link Crypt32.lib (handled in the sbox VPC).
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S src -B src\build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+            -DBUILD_SHARED_LIBS=OFF `
+            -DBUILD_TESTING=OFF `
+            -DCURL_STATICLIB=ON `
+            -DCURL_USE_SCHANNEL=ON `
+            -DCURL_DISABLE_LDAP=ON `
+            -DCURL_DISABLE_SMTP=ON `
+            -DCURL_DISABLE_IMAP=ON `
+            -DCURL_DISABLE_POP3=ON `
+            -DCURL_DISABLE_FTP=ON `
+            -DCURL_DISABLE_TELNET=ON `
+            -DCURL_DISABLE_RTSP=ON `
+            -DCURL_DISABLE_DICT=ON `
+            -DCURL_DISABLE_GOPHER=ON `
+            -DCURL_DISABLE_MQTT=ON `
+            -DCURL_DISABLE_FILE=ON `
+            -DCURL_ZLIB=OFF `
+            -DUSE_NGHTTP2=OFF `
+            -DUSE_NGTCP2=OFF
+          cmake --build src\build --parallel
+          cmake --install src\build
+
+          # cmake installs the lib as libcurl.lib or libcurl_a.lib; rename to curl.lib
+          $lib = Get-ChildItem -Path "$env:GITHUB_WORKSPACE\dist\lib" -Recurse -Include "*.lib" | Select-Object -First 1
+          if ($lib -and $lib.Name -ne "curl.lib") {
+            Write-Host "Renaming $($lib.Name) -> curl.lib"
+            Rename-Item $lib.FullName "curl.lib"
+          }
+
+      # ── macOS ─────────────────────────────────────────────────────────────
+      # Build static libcurl backed by SecureTransport (Apple native TLS).
+      # Consumers must also link the Security and CoreFoundation frameworks
+      # (handled in the sbox VPC).
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_TESTING=OFF \
+            -DCURL_STATICLIB=ON \
+            -DCURL_USE_SECURE_TRANSPORT=ON \
+            -DCURL_DISABLE_LDAP=ON \
+            -DCURL_DISABLE_SMTP=ON \
+            -DCURL_DISABLE_IMAP=ON \
+            -DCURL_DISABLE_POP3=ON \
+            -DCURL_DISABLE_FTP=ON \
+            -DCURL_DISABLE_TELNET=ON \
+            -DCURL_DISABLE_RTSP=ON \
+            -DCURL_DISABLE_DICT=ON \
+            -DCURL_DISABLE_GOPHER=ON \
+            -DCURL_DISABLE_MQTT=ON \
+            -DCURL_DISABLE_FILE=ON \
+            -DCURL_ZLIB=OFF \
+            -DUSE_NGHTTP2=OFF \
+            -DUSE_NGTCP2=OFF
+          cmake --build src/build --parallel
+          cmake --install src/build
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: libcurl
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "libcurl ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit
