@@ -85,6 +85,9 @@ jobs:
         shell: pwsh
         run: |
           cmake -S src -B src\build -G Ninja `
+            -DCMAKE_C_COMPILER=cl `
+            -DCMAKE_CXX_COMPILER=cl `
+            -DSVT_AV1_LTO=OFF `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
             -DBUILD_SHARED_LIBS=OFF `
