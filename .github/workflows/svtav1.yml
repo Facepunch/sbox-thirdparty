@@ -76,7 +76,8 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
             -DBUILD_SHARED_LIBS=OFF \
             -DBUILD_TESTING=OFF \
-            -DBUILD_APPS=OFF
+            -DBUILD_APPS=OFF \
+            -DSVT_AV1_LTO=OFF
           cmake --build src/build --parallel
           cmake --install src/build
 
