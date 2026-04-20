@@ -75,6 +75,7 @@ jobs:
             --enable-static --disable-shared \
             --disable-examples --disable-tools \
             --disable-docs --disable-unit-tests \
+            --enable-pic \
             --enable-vp9 --disable-vp8
           make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
           make install

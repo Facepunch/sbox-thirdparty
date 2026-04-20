@@ -79,6 +79,7 @@ jobs:
           meson setup src/build src \
             --default-library=static --buildtype=release \
             -Denable_tools=false -Denable_tests=false \
+            -Db_pic=true \
             --prefix="$GITHUB_WORKSPACE/dist"
           meson compile -C src/build
           meson install -C src/build
