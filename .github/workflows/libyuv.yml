@@ -62,11 +62,12 @@ jobs:
         run: |
           cmake -S src -B src/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DUNIT_TEST=OFF
           cmake --build src/build --target yuv --parallel
-          cmake --install src/build
+          mkdir -p dist/include dist/lib
+          cp -r src/include/. dist/include/
+          cp src/build/libyuv.a dist/lib/
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
@@ -77,10 +78,11 @@ jobs:
             -DCMAKE_CXX_COMPILER=cl `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
-            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
             -DUNIT_TEST=OFF
           cmake --build src\build --target yuv --parallel
-          cmake --install src\build
+          New-Item -ItemType Directory -Force dist\include, dist\lib | Out-Null
+          Copy-Item -Recurse src\include\* dist\include\
+          Copy-Item src\build\yuv.lib dist\lib\
 
       - uses: ./.github/actions/collect-package-upload
         with:
