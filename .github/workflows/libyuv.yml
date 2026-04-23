@@ -1,0 +1,97 @@
+name: Build libyuv
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'libyuv commit hash or branch (e.g. main)'
+        required: true
+        default: 'main'
+  push:
+    tags: ['libyuv-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#libyuv-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=libyuv-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Install cmake + ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build
+
+      - name: Install ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Clone libyuv ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 https://chromium.googlesource.com/libyuv/libyuv src
+
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DUNIT_TEST=OFF
+          cmake --build src/build --target yuv --parallel
+          cmake --install src/build
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S src -B src\build -G Ninja `
+            -DCMAKE_C_COMPILER=cl `
+            -DCMAKE_CXX_COMPILER=cl `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+            -DUNIT_TEST=OFF
+          cmake --build src\build --target yuv --parallel
+          cmake --install src\build
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: libyuv
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "libyuv ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit

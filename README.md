@@ -13,6 +13,7 @@ Prebuilt static libraries for [sbox](https://github.com/Facepunch/sbox), built v
 | [libwebp](https://chromium.googlesource.com/webm/libwebp) | v1.5.0 | WebP decoder/encoder |
 | [libwebm](https://github.com/webmproject/libwebm) | 1.0.0.32 | WebM/MKV demuxer (mkvparser) |
 | [libcurl](https://curl.se/libcurl/) | 8.12.1 | HTTP/HTTPS streaming |
+| [libyuv](https://chromium.googlesource.com/libyuv/libyuv/) | main | RGBA↔I420 color conversion (SIMD) |
 
 ## Platforms
 
