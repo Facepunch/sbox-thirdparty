@@ -22,6 +22,7 @@ runs:
         mkdir -p out/include out/lib
         cp -r dist/include/. out/include/
         find dist -name "*.a" -exec cp {} out/lib/ \;
+        find dist \( -name "*.so" -o -name "*.so.*" -o -name "*.dylib" \) -exec cp {} out/lib/ \; 2>/dev/null || true
 
     - name: Collect (Windows)
       if: runner.os == 'Windows'
@@ -29,7 +30,7 @@ runs:
       run: |
         New-Item -ItemType Directory -Force out\include, out\lib | Out-Null
         Copy-Item -Recurse dist\include\* out\include\
-        Get-ChildItem dist -Recurse -Include *.lib,*.a | Copy-Item -Destination out\lib\
+        Get-ChildItem dist -Recurse -Include *.lib,*.a,*.dll | Copy-Item -Destination out\lib\
 
     - name: Package (Unix)
       if: runner.os != 'Windows'

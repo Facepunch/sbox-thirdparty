@@ -95,12 +95,6 @@ jobs:
             -DUSE_LIBIDN2=OFF
           cmake --build src/build --parallel
           cmake --install src/build
-          SSL_A=$(find /usr/lib -name "libssl.a" 2>/dev/null | head -1)
-          CRYPTO_A=$(find /usr/lib -name "libcrypto.a" 2>/dev/null | head -1)
-          echo "libssl.a  : $SSL_A"
-          echo "libcrypto.a: $CRYPTO_A"
-          [ -n "$SSL_A" ]    && cp "$SSL_A"    "$GITHUB_WORKSPACE/dist/lib/"
-          [ -n "$CRYPTO_A" ] && cp "$CRYPTO_A" "$GITHUB_WORKSPACE/dist/lib/"
 
       # ── Windows ────────────────────────────────────────────────────────────
       # Build static libcurl backed by Windows Schannel — no extra DLLs needed.
