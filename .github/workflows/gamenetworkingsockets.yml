@@ -1,0 +1,173 @@
+name: Build GameNetworkingSockets
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'GameNetworkingSockets version tag (e.g. v1.5.1)'
+        required: true
+        default: 'v1.5.1'
+  push:
+    tags: ['gamenetworkingsockets-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#gamenetworkingsockets-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V"               >> $GITHUB_OUTPUT
+          echo "release_tag=gamenetworkingsockets-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build libssl-dev libprotobuf-dev protobuf-compiler
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja openssl@3 protobuf abseil
+
+      - name: Clone GameNetworkingSockets ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/ValveSoftware/GameNetworkingSockets.git src
+
+      # Clone vcpkg inside the GNS source tree.  CMakeLists.txt auto-detects it at
+      # ${CMAKE_SOURCE_DIR}/vcpkg and sets the toolchain file automatically.
+      - name: Clone vcpkg (Windows)
+        if: runner.os == 'Windows'
+        run: git clone https://github.com/microsoft/vcpkg src/vcpkg
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: src/vcpkg
+        run: .\bootstrap-vcpkg.bat -disableMetrics
+
+      # Enable GitHub Actions binary caching so repeated builds reuse compiled packages.
+      - name: Configure vcpkg binary caching (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          echo "VCPKG_BINARY_SOURCES=clear;x-gha,readwrite" >> $env:GITHUB_ENV
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DBUILD_STATIC_LIB=ON \
+            -DBUILD_SHARED_LIB=OFF \
+            -DBUILD_TESTS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DBUILD_TOOLS=OFF \
+            -DUSE_STEAMWEBRTC=OFF \
+            -DProtobuf_USE_STATIC_LIBS=ON \
+            -DOPENSSL_USE_STATIC_LIBS=TRUE
+          cmake --build src/build --parallel
+          cmake --install src/build
+
+          # Bundle the static protobuf and OpenSSL libs the consumer must link.
+          for lib in libprotobuf.a libssl.a libcrypto.a; do
+            f=$(find /usr -name "$lib" 2>/dev/null | head -1)
+            [ -n "$f" ] && cp "$f" "$GITHUB_WORKSPACE/dist/lib/" && echo "Bundled $f"
+          done
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          OPENSSL_PREFIX=$(brew --prefix openssl@3)
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DBUILD_STATIC_LIB=ON \
+            -DBUILD_SHARED_LIB=OFF \
+            -DBUILD_TESTS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DBUILD_TOOLS=OFF \
+            -DUSE_STEAMWEBRTC=OFF \
+            -DProtobuf_USE_STATIC_LIBS=ON \
+            -DOPENSSL_USE_STATIC_LIBS=TRUE \
+            -DOPENSSL_ROOT_DIR="$OPENSSL_PREFIX"
+          cmake --build src/build --parallel
+          cmake --install src/build
+
+          # Bundle protobuf, abseil (protobuf transitive dep on macOS/Homebrew), and OpenSSL.
+          for pkg in protobuf abseil; do
+            prefix=$(brew --prefix "$pkg" 2>/dev/null) || continue
+            find "$prefix/lib" -maxdepth 1 -name "*.a" -exec cp {} "$GITHUB_WORKSPACE/dist/lib/" \;
+          done
+          find "$OPENSSL_PREFIX/lib" -maxdepth 1 -name "libssl.a"    -exec cp {} "$GITHUB_WORKSPACE/dist/lib/" \;
+          find "$OPENSSL_PREFIX/lib" -maxdepth 1 -name "libcrypto.a" -exec cp {} "$GITHUB_WORKSPACE/dist/lib/" \;
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S src -B src\build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+            -DBUILD_STATIC_LIB=ON `
+            -DBUILD_SHARED_LIB=OFF `
+            -DBUILD_TESTS=OFF `
+            -DBUILD_EXAMPLES=OFF `
+            -DBUILD_TOOLS=OFF `
+            -DUSE_STEAMWEBRTC=OFF `
+            -DProtobuf_USE_STATIC_LIBS=ON `
+            -DOPENSSL_USE_STATIC_LIBS=TRUE `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DVCPKG_INSTALLED_DIR="$env:GITHUB_WORKSPACE\src\vcpkg_installed" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          cmake --build src\build --parallel
+          cmake --install src\build
+
+          # Bundle all vcpkg-installed static libs (protobuf, openssl, abseil, etc.)
+          $vcpkgLib = "$env:GITHUB_WORKSPACE\src\vcpkg_installed\x64-windows-static\lib"
+          if (Test-Path $vcpkgLib) {
+            Get-ChildItem $vcpkgLib -Recurse -Include *.lib | Copy-Item -Destination "$env:GITHUB_WORKSPACE\dist\lib\"
+          } else {
+            Write-Error "vcpkg installed lib dir not found: $vcpkgLib"
+            exit 1
+          }
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: gamenetworkingsockets
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "GameNetworkingSockets ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit
