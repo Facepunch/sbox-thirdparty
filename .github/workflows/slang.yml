@@ -50,9 +50,15 @@ jobs:
       - uses: ./.github/actions/setup-msvc
         if: runner.os == 'Windows'
 
+      # X11 headers are needed even with gfx off: slang-rhi's vendored vulkan.h pulls in
+      # X11/Xlib.h on Linux. SLANG_ENABLE_SLANG_RHI=OFF below should skip it, but keep the
+      # headers so the build does not hinge on that option name staying stable.
       - name: Install cmake + ninja (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake ninja-build \
+            libx11-dev libxrandr-dev libxext-dev libxcb1-dev
 
       - name: Install ninja (macOS)
         if: runner.os == 'macOS'
@@ -75,6 +81,7 @@ jobs:
             -DSLANG_ENABLE_TESTS=OFF \
             -DSLANG_ENABLE_EXAMPLES=OFF \
             -DSLANG_ENABLE_GFX=OFF \
+            -DSLANG_ENABLE_SLANG_RHI=OFF \
             -DSLANG_ENABLE_SLANGD=OFF \
             -DSLANG_ENABLE_SLANGRT=ON \
             -DSLANG_LIB_TYPE=SHARED
@@ -95,6 +102,7 @@ jobs:
             -DSLANG_ENABLE_TESTS=OFF `
             -DSLANG_ENABLE_EXAMPLES=OFF `
             -DSLANG_ENABLE_GFX=OFF `
+            -DSLANG_ENABLE_SLANG_RHI=OFF `
             -DSLANG_ENABLE_SLANGD=OFF `
             -DSLANG_ENABLE_SLANGRT=ON `
             -DSLANG_LIB_TYPE=SHARED
