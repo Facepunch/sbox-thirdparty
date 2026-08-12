@@ -62,9 +62,15 @@ jobs:
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.curl_tag }} https://github.com/curl/curl.git src
 
       # ── Linux ──────────────────────────────────────────────────────────────
-      # Build static libcurl with OpenSSL backend.
-      # After install, copy libssl.a + libcrypto.a into dist/lib so they are
-      # packaged alongside libcurl.a — the sbox VPC links all three.
+      # Build static libcurl with the OpenSSL backend, but link OpenSSL DYNAMICALLY
+      # against the system libssl/libcrypto (provided by the distro / Steam Runtime).
+      # We intentionally do NOT bundle static libssl.a/libcrypto.a. Build hosts need
+      # libssl-dev.
+      #
+      # Note for whoever wires libcurl into the Linux side of engine2.build.cs: the old
+      # VPC linked libssl and libcrypto out of src/thirdparty/libcurl/lib/<plat>/ rather
+      # than from the system. Those bundled archives are no longer shipped, so the new
+      # build needs system -lssl -lcrypto instead.
       - name: Build (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -76,7 +82,6 @@ jobs:
             -DBUILD_TESTING=OFF \
             -DCURL_STATICLIB=ON \
             -DCURL_USE_OPENSSL=ON \
-            -DOPENSSL_USE_STATIC_LIBS=TRUE \
             -DCURL_DISABLE_LDAP=ON \
             -DCURL_DISABLE_SMTP=ON \
             -DCURL_DISABLE_IMAP=ON \
