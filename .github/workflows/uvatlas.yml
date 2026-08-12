@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       lib_version:
-        description: 'UVAtlas release tag (e.g. jun2025)'
+        description: 'UVAtlas release tag (e.g. oct2025)'
         required: true
-        default: 'jun2025'
+        default: 'oct2025'
   push:
     tags: ['uvatlas-*']
 

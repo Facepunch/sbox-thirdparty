@@ -73,13 +73,15 @@ jobs:
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON
           cmake --build src/build --parallel --target EtcLib
 
+      # The policy value must be quoted: unquoted, PowerShell hands cmake a truncated "3"
+      # and the configure fails with 'Invalid CMAKE_POLICY_VERSION_MINIMUM value "3"'.
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cmake -S src -B src\build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 `
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
           cmake --build src\build --parallel --target EtcLib
 

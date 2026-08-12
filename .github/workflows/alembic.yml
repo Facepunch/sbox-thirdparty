@@ -95,6 +95,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" `
             -DCMAKE_PREFIX_PATH="$env:GITHUB_WORKSPACE\deps" `
             -DILMBASE_ROOT="$env:GITHUB_WORKSPACE\deps" `
             -DALEMBIC_SHARED_LIBS=OFF `

@@ -95,6 +95,25 @@ jobs:
           cmake --build src\build --parallel
           cmake --install src\build
 
+      # The loader installs only its binary, no headers, and collect-package-upload
+      # requires a dist/include. Stage the Vulkan-Headers copy that UPDATE_DEPS fetched so
+      # the archive describes the API version the loader was actually built against.
+      - name: Stage headers (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist/include
+          HDR=$(find src -type d -path "*/include/vulkan" -print -quit)
+          if [ -n "$HDR" ]; then cp -r "$(dirname "$HDR")/." dist/include/; fi
+
+      - name: Stage headers (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist\include | Out-Null
+          $hdr = Get-ChildItem src -Recurse -Directory -Filter vulkan |
+            Where-Object { $_.Parent.Name -eq 'include' } | Select-Object -First 1
+          if ($hdr) { Copy-Item -Recurse -Force "$($hdr.Parent.FullName)\*" dist\include\ }
+
       - uses: ./.github/actions/collect-package-upload
         with:
           lib_name: vulkan-loader

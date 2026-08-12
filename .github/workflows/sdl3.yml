@@ -1,12 +1,17 @@
 name: Build SDL3
 
+# The copy vendored in sbox reports SDL 3.5.0, but there is no release-3.5.0 tag - 3.5.0
+# is the in-development version on main, so that copy is a main snapshot rather than a
+# release. The default here is the newest actual release; pass a commit SHA instead if we
+# need to reproduce the exact snapshot.
+
 on:
   workflow_dispatch:
     inputs:
       lib_version:
-        description: 'SDL tag (e.g. release-3.5.0)'
+        description: 'SDL tag, branch or commit SHA (e.g. release-3.4.14)'
         required: true
-        default: 'release-3.5.0'
+        default: 'release-3.4.14'
   push:
     tags: ['sdl3-*']
 
@@ -64,8 +69,11 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ninja
 
+      # clone + checkout rather than --branch, so a commit SHA works as well as a tag.
       - name: Clone SDL ${{ needs.setup.outputs.lib_version }}
-        run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/libsdl-org/SDL src
+        run: |
+          git clone https://github.com/libsdl-org/SDL src
+          git -C src checkout ${{ needs.setup.outputs.lib_version }}
 
       # Source 2 links the shared SDL3 but the static lib is shipped too, matching what
       # src/thirdparty/sdl3/lib currently carries. Two configures, one install prefix.
