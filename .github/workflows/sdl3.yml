@@ -60,7 +60,7 @@ jobs:
           sudo apt-get install -y cmake ninja-build pkg-config \
             libasound2-dev libpulse-dev libaudio-dev libjack-dev libsndio-dev \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
-            libxi-dev libxss-dev libxkbcommon-dev libdrm-dev libgbm-dev \
+            libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libdrm-dev libgbm-dev \
             libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev libdbus-1-dev \
             libibus-1.0-dev libudev-dev libpipewire-0.3-dev libwayland-dev \
             wayland-protocols libdecor-0-dev
@@ -92,6 +92,8 @@ jobs:
             cmake --install "src/build-$shared"
           done
 
+      # Every -Dkey=value carrying a variable must be quoted, or PowerShell passes the
+      # literal '$crt' through to cmake instead of expanding it.
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -102,9 +104,9 @@ jobs:
             cmake -S src -B "src\build-$shared" -G Ninja `
               -DCMAKE_BUILD_TYPE=Release `
               -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
-              -DCMAKE_MSVC_RUNTIME_LIBRARY=$crt `
-              -DBUILD_SHARED_LIBS=$shared `
-              -DSDL_SHARED=$shared -DSDL_STATIC=$static `
+              "-DCMAKE_MSVC_RUNTIME_LIBRARY=$crt" `
+              "-DBUILD_SHARED_LIBS=$shared" `
+              "-DSDL_SHARED=$shared" "-DSDL_STATIC=$static" `
               -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_INSTALL_TESTS=OFF
             cmake --build "src\build-$shared" --parallel
             cmake --install "src\build-$shared"

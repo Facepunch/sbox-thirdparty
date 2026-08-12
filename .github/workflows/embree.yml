@@ -65,14 +65,14 @@ jobs:
       - name: Clone embree ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/embree/embree src
 
-      # On aarch64 the x86 ISA targets must be turned off and NEON turned on, otherwise
-      # embree tries to build its SSE/AVX kernels.
+      # EMBREE_ARM is the switch that routes 3.13.x onto its sse2neon path; without it the
+      # ISA toggles alone still leave -msse2 on the compile line and clang/gcc reject it.
       - name: Select ISA flags
         id: isa
         shell: bash
         run: |
           if [ "${{ matrix.arm }}" = "true" ]; then
-            echo "flags=-DEMBREE_ISA_NEON=ON -DEMBREE_ISA_SSE2=OFF -DEMBREE_ISA_SSE42=OFF -DEMBREE_ISA_AVX=OFF -DEMBREE_ISA_AVX2=OFF -DEMBREE_ISA_AVX512=OFF" >> $GITHUB_OUTPUT
+            echo "flags=-DEMBREE_ARM=ON -DEMBREE_ISA_NEON=ON -DEMBREE_ISA_SSE2=OFF -DEMBREE_ISA_SSE42=OFF -DEMBREE_ISA_AVX=OFF -DEMBREE_ISA_AVX2=OFF -DEMBREE_ISA_AVX512=OFF" >> $GITHUB_OUTPUT
           else
             echo "flags=-DEMBREE_MAX_ISA=AVX2 -DEMBREE_ISA_AVX512=OFF" >> $GITHUB_OUTPUT
           fi
@@ -101,6 +101,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" `
             -DEMBREE_STATIC_LIB=ON `
             -DEMBREE_ISPC_SUPPORT=OFF `
             -DEMBREE_TASKING_SYSTEM=INTERNAL `
