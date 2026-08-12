@@ -87,6 +87,7 @@ jobs:
       - name: Clone IlmBase ${{ needs.setup.outputs.ilmbase_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.ilmbase_version }} https://github.com/AcademySoftwareFoundation/openexr openexr-src
 
+      # -include cstdint for GCC 13+; see the same note in openexr.yml.
       - name: Build IlmBase (Unix)
         if: runner.os != 'Windows'
         run: |
@@ -95,6 +96,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/deps" \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_CXX_FLAGS="-include cstdint" \
             -DBUILD_SHARED_LIBS=OFF \
             -DBUILD_TESTING=OFF \
             -DOPENEXR_BUILD_UTILS=OFF \
@@ -126,6 +128,14 @@ jobs:
       - name: Clone Alembic ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/alembic/alembic src
 
+      # Alembic 1.7.x does cmake_policy(SET CMP0042 OLD) under APPLE, which CMake 4.x
+      # refuses outright - and CMAKE_POLICY_VERSION_MINIMUM cannot override an explicit
+      # OLD. The policy only governs MACOSX_RPATH, which is irrelevant here because we
+      # build static, so rewriting it to NEW cannot change our output.
+      - name: Patch CMP0042 out (Unix)
+        if: runner.os != 'Windows'
+        run: sed -i.bak 's/CMP0042 OLD/CMP0042 NEW/' src/CMakeLists.txt
+
       - name: Build (Unix)
         if: runner.os != 'Windows'
         run: |
@@ -134,6 +144,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_CXX_FLAGS="-include cstdint" \
             -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/deps" \
             -DILMBASE_ROOT="$GITHUB_WORKSPACE/deps" \
             -DALEMBIC_SHARED_LIBS=OFF \

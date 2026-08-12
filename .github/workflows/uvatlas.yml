@@ -84,13 +84,20 @@ jobs:
       - name: Clone UVAtlas ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/microsoft/UVAtlas src
 
+      # DirectXMath.h includes <sal.h>, which is MSVC-only. DirectX-Headers ships stub SAL
+      # headers for exactly this, but they are not on the default include path once
+      # installed, so point at them explicitly.
       - name: Build (Unix)
         if: runner.os != 'Windows'
         run: |
+          SAL_DIR=$(find "$GITHUB_WORKSPACE/deps/include" -name "sal.h" -exec dirname {} \; | head -1)
+          if [ -z "$SAL_DIR" ]; then echo "No stub sal.h found in DirectX-Headers install"; exit 1; fi
+          echo "SAL stubs: $SAL_DIR"
           cmake -S src -B src/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_CXX_FLAGS="-I$SAL_DIR" \
             -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/deps" \
             -DBUILD_TOOLS=OFF \
             -DBUILD_SAMPLE=OFF

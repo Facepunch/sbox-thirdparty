@@ -89,6 +89,9 @@ jobs:
       - name: Clone OpenEXR ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/AcademySoftwareFoundation/openexr src
 
+      # -include cstdint: 2.5.x predates GCC 13, which stopped pulling <cstdint> in
+      # transitively, so ImfHuf.cpp fails with "'uint64_t' was not declared in this scope".
+      # Apple Clang still provides it, which is why osxarm64 passed without this.
       - name: Build (Unix)
         if: runner.os != 'Windows'
         run: |
@@ -97,6 +100,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_CXX_FLAGS="-include cstdint" \
             -DBUILD_SHARED_LIBS=OFF \
             -DBUILD_TESTING=OFF \
             -DOPENEXR_BUILD_UTILS=OFF \
