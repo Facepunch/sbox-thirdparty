@@ -35,16 +35,18 @@ jobs:
           echo "lib_version=$V" >> $GITHUB_OUTPUT
           echo "release_tag=embree-$V" >> $GITHUB_OUTPUT
 
+  # win64 + linuxsteamrt64 only. sbox ships embree for win32/win64/linuxsteamrt64 and
+  # nothing else, and 3.13.x cannot build on aarch64 with current compilers anyway - its
+  # vendored sse2neon.h/avx2neon.h fail with "cannot convert '__Int64x2_t' to '__m128i'"
+  # on GCC 13+. Adding arm would mean moving to embree 4, which is a different API.
   build:
     needs: setup
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: windows-latest,   platform: win64,              arm: false }
-          - { os: ubuntu-24.04,     platform: linuxsteamrt64,     arm: false }
-          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64,  arm: true  }
-          - { os: macos-26,         platform: osxarm64,           arm: true  }
+          - { os: windows-latest, platform: win64 }
+          - { os: ubuntu-24.04,   platform: linuxsteamrt64 }
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.platform }}
 
@@ -65,17 +67,10 @@ jobs:
       - name: Clone embree ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/embree/embree src
 
-      # EMBREE_ARM is the switch that routes 3.13.x onto its sse2neon path; without it the
-      # ISA toggles alone still leave -msse2 on the compile line and clang/gcc reject it.
       - name: Select ISA flags
         id: isa
         shell: bash
-        run: |
-          if [ "${{ matrix.arm }}" = "true" ]; then
-            echo "flags=-DEMBREE_ARM=ON -DEMBREE_ISA_NEON=ON -DEMBREE_ISA_SSE2=OFF -DEMBREE_ISA_SSE42=OFF -DEMBREE_ISA_AVX=OFF -DEMBREE_ISA_AVX2=OFF -DEMBREE_ISA_AVX512=OFF" >> $GITHUB_OUTPUT
-          else
-            echo "flags=-DEMBREE_MAX_ISA=AVX2 -DEMBREE_ISA_AVX512=OFF" >> $GITHUB_OUTPUT
-          fi
+        run: echo "flags=-DEMBREE_MAX_ISA=AVX2 -DEMBREE_ISA_AVX512=OFF" >> $GITHUB_OUTPUT
 
       - name: Build (Unix)
         if: runner.os != 'Windows'

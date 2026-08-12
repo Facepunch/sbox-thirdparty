@@ -31,9 +31,9 @@ Prebuilt static libraries for [sbox](https://github.com/Facepunch/sbox), built v
 | [uvatlas](https://github.com/microsoft/UVAtlas) | jun2025 | UV atlas generation |
 
 Not every library ships all four platforms — `openexr`, `alembic`, `oidn`, `uvatlas`,
-`qt5` and `fidelityfx-fsr3` are `win64` only; `ispc_texcomp` and `openxr-loader` are
-`win64` + `linuxsteamrt64`; `vulkan-loader` skips macOS (MoltenVK). That is all sbox
-consumes today — extending any of them is a matrix edit.
+`qt5` and `fidelityfx-fsr3` are `win64` only; `ispc_texcomp`, `openxr-loader` and
+`embree` are `win64` + `linuxsteamrt64`; `vulkan-loader` skips macOS (MoltenVK). That is
+all sbox consumes today — extending any of them is a matrix edit.
 
 Deliberately **not** built here: `fbx` (Autodesk), `nvidia` (DLSS/Aftermath/NVAPI),
 `ovrlipsync` and `superluminal`. These are vendor SDKs shipped as binaries with no
