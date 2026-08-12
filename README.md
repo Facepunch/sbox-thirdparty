@@ -27,7 +27,6 @@ Prebuilt static libraries for [sbox](https://github.com/Facepunch/sbox), built v
 | [qt5](https://github.com/Facepunch/qt) | master (Qt 5.15.2) | Tools UI — **our fork**, not upstream Qt |
 | [vulkan-loader](https://github.com/KhronosGroup/Vulkan-Loader) | v1.4.313 | Vulkan loader (`vulkan-1` / `libvulkan`) |
 | [openxr-loader](https://github.com/KhronosGroup/OpenXR-SDK) | release-1.1.43 | OpenXR loader |
-| [uvatlas](https://github.com/microsoft/UVAtlas) | jun2025 | UV atlas generation |
 
 Most libraries build all four platforms. The exceptions are not preferences — each is
 blocked on something concrete:
