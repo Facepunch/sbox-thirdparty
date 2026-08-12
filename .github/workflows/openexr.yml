@@ -8,7 +8,8 @@ name: Build openexr
 # replaces IlmBase with Imath and moves headers to <Imath/...>, which is a source change
 # in modeldoc_utils, not a dependency move.
 #
-# win64 only, matching modeldoc_utils.build.cs (`if ( Windows ) LibDir( ... )`).
+# zlib is built from source on Windows only; the Linux and macOS runners have a usable
+# system zlib.
 
 on:
   workflow_dispatch:
@@ -18,7 +19,7 @@ on:
         required: true
         default: 'v2.5.8'
       zlib_version:
-        description: 'zlib tag to build against'
+        description: 'zlib tag to build against (Windows only)'
         required: true
         default: 'v1.3.1'
   push:
@@ -47,16 +48,34 @@ jobs:
 
   build:
     needs: setup
-    runs-on: windows-latest
-    name: win64
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
 
-      # OpenEXR needs zlib and the runner has none, so build a static /MT one first.
-      - name: Build zlib ${{ needs.setup.outputs.zlib_version }}
+      - name: Install cmake + ninja + zlib (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build zlib1g-dev
+
+      - name: Install ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      # OpenEXR needs zlib and the Windows runner has none, so build a static /MT one.
+      - name: Build zlib ${{ needs.setup.outputs.zlib_version }} (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           git clone --depth 1 --branch ${{ needs.setup.outputs.zlib_version }} https://github.com/madler/zlib zlib-src
@@ -70,13 +89,32 @@ jobs:
       - name: Clone OpenEXR ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/AcademySoftwareFoundation/openexr src
 
-      - name: Build
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_TESTING=OFF \
+            -DOPENEXR_BUILD_UTILS=OFF \
+            -DOPENEXR_VIEWERS_ENABLE=OFF \
+            -DPYILMBASE_ENABLE=OFF \
+            -DOPENEXR_INSTALL_EXAMPLES=OFF
+          cmake --build src/build --parallel
+          cmake --install src/build
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cmake -S src -B src\build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" `
             -DCMAKE_PREFIX_PATH="$env:GITHUB_WORKSPACE\zlib-dist" `
             -DZLIB_ROOT="$env:GITHUB_WORKSPACE\zlib-dist" `
             -DZLIB_USE_STATIC_LIBS=ON `
@@ -93,7 +131,7 @@ jobs:
         with:
           lib_name: openexr
           lib_version: ${{ needs.setup.outputs.lib_version }}
-          platform: win64
+          platform: ${{ matrix.platform }}
 
   release:
     needs: [setup, build]

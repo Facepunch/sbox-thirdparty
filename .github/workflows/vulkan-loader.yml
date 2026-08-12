@@ -7,7 +7,8 @@ name: Build vulkan-loader
 # UPDATE_DEPS=ON lets the loader fetch the matching Vulkan-Headers revision itself, which
 # keeps the loader and headers in step without us pinning two versions by hand.
 #
-# No osxarm64: macOS goes through MoltenVK rather than the Khronos loader.
+# osxarm64 is built too: the plan is KosmicKrisp on macOS rather than MoltenVK, so the
+# Khronos loader is wanted there as well.
 
 on:
   workflow_dispatch:
@@ -45,6 +46,7 @@ jobs:
           - { os: windows-latest,   platform: win64 }
           - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
           - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.platform }}
 
@@ -63,6 +65,10 @@ jobs:
             libx11-dev libxrandr-dev libxcb1-dev libx11-xcb-dev \
             libxcb-randr0-dev libwayland-dev wayland-protocols
 
+      - name: Install ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -70,8 +76,8 @@ jobs:
       - name: Clone Vulkan-Loader ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/KhronosGroup/Vulkan-Loader src
 
-      - name: Build (Linux)
-        if: runner.os == 'Linux'
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
         run: |
           cmake -S src -B src/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \

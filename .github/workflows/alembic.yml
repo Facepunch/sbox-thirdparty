@@ -8,7 +8,7 @@ name: Build alembic
 # release, so this workflow stays independently runnable. Keep ilmbase_version in step
 # with whatever openexr.yml last published.
 #
-# win64 only, matching modeldoc_utils.build.cs.
+# zlib is built from source on Windows only; Linux and macOS use the system one.
 
 on:
   workflow_dispatch:
@@ -47,15 +47,33 @@ jobs:
 
   build:
     needs: setup
-    runs-on: windows-latest
-    name: win64
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
 
-      - name: Build zlib
+      - name: Install cmake + ninja + zlib (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build zlib1g-dev
+
+      - name: Install ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Build zlib (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           git clone --depth 1 --branch v1.3.1 https://github.com/madler/zlib zlib-src
@@ -66,14 +84,34 @@ jobs:
           cmake --build zlib-build --parallel
           cmake --install zlib-build
 
-      - name: Build IlmBase ${{ needs.setup.outputs.ilmbase_version }}
+      - name: Clone IlmBase ${{ needs.setup.outputs.ilmbase_version }}
+        run: git clone --depth 1 --branch ${{ needs.setup.outputs.ilmbase_version }} https://github.com/AcademySoftwareFoundation/openexr openexr-src
+
+      - name: Build IlmBase (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S openexr-src -B openexr-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/deps" \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_TESTING=OFF \
+            -DOPENEXR_BUILD_UTILS=OFF \
+            -DOPENEXR_VIEWERS_ENABLE=OFF \
+            -DPYILMBASE_ENABLE=OFF
+          cmake --build openexr-build --parallel
+          cmake --install openexr-build
+
+      - name: Build IlmBase (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          git clone --depth 1 --branch ${{ needs.setup.outputs.ilmbase_version }} https://github.com/AcademySoftwareFoundation/openexr openexr-src
           cmake -S openexr-src -B openexr-build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\deps" `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" `
             -DCMAKE_PREFIX_PATH="$env:GITHUB_WORKSPACE\deps" `
             -DZLIB_ROOT="$env:GITHUB_WORKSPACE\deps" `
             -DZLIB_USE_STATIC_LIBS=ON `
@@ -88,7 +126,28 @@ jobs:
       - name: Clone Alembic ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/alembic/alembic src
 
-      - name: Build
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/deps" \
+            -DILMBASE_ROOT="$GITHUB_WORKSPACE/deps" \
+            -DALEMBIC_SHARED_LIBS=OFF \
+            -DALEMBIC_ILMBASE_LINK_STATIC=ON \
+            -DUSE_HDF5=OFF \
+            -DUSE_TESTS=OFF \
+            -DUSE_BINARIES=OFF \
+            -DUSE_EXAMPLES=OFF \
+            -DALEMBIC_BUILD_LIBS=ON
+          cmake --build src/build --parallel
+          cmake --install src/build
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cmake -S src -B src\build -G Ninja `
@@ -112,7 +171,7 @@ jobs:
         with:
           lib_name: alembic
           lib_version: ${{ needs.setup.outputs.lib_version }}
-          platform: win64
+          platform: ${{ matrix.platform }}
 
   release:
     needs: [setup, build]

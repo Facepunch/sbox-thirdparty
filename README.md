@@ -29,10 +29,19 @@ Prebuilt static libraries for [sbox](https://github.com/Facepunch/sbox), built v
 | [openxr-loader](https://github.com/KhronosGroup/OpenXR-SDK) | release-1.1.43 | OpenXR loader |
 | [uvatlas](https://github.com/microsoft/UVAtlas) | jun2025 | UV atlas generation |
 
-Not every library ships all four platforms — `openexr`, `alembic`, `oidn`, `uvatlas`,
-`qt5` and `fidelityfx-fsr3` are `win64` only; `ispc_texcomp`, `openxr-loader` and
-`embree` are `win64` + `linuxsteamrt64`; `vulkan-loader` skips macOS (MoltenVK). That is
-all sbox consumes today — extending any of them is a matrix edit.
+Most libraries build all four platforms. The exceptions are not preferences — each is
+blocked on something concrete:
+
+| Library | Platforms | Why not all four |
+|---------|-----------|------------------|
+| `embree` | win64, linuxsteamrt64 | 3.13.x's vendored `sse2neon.h` does not compile on aarch64 with GCC 13+. Needs embree 4, which is a different API. |
+| `oidn` | win64 | 1.x has no NEON path (ISPC targets are SSE/AVX only). Needs oidn 2.x, which reworks the device API `vrad3` uses. |
+| `ispc_texcomp` | win64, linuxsteamrt64 | The vendored kernels are `sse2,avx` only; that snapshot has no NEON support to compile. |
+| `qt5` | win64 | Our fork builds through `valve/fp_config.bat` + `jom`, which is Windows-only tooling. A Unix build means driving its `configure` instead. |
+| `fidelityfx-fsr3` | win64 | AMD's SDK build and its shader-compiler tool are Windows-centric. |
+
+Unblocking the first three means a major-version bump on the library, which changes sbox
+source — so they are decisions, not matrix edits.
 
 Deliberately **not** built here: `fbx` (Autodesk), `nvidia` (DLSS/Aftermath/NVAPI),
 `ovrlipsync` and `superluminal`. These are vendor SDKs shipped as binaries with no

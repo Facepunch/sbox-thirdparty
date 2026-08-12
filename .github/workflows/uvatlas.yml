@@ -1,10 +1,10 @@
 name: Build uvatlas
 
 # UVAtlas.lib, which sbox keeps in the oddly-named src/thirdparty/lib/common/<plat>/vc14/.
-# Microsoft tag their releases by month (e.g. jun2025) rather than semver.
+# Microsoft tag their releases by month (e.g. oct2025) rather than semver.
 #
-# win64 only - the win32/vc14 copy in the tree is legacy and nothing in the current
-# .build.cs set references a 32-bit configuration.
+# On Windows the Win SDK supplies DirectXMath; everywhere else it and DirectX-Headers have
+# to be staged first, which is what the extra dependency step below does.
 
 on:
   workflow_dispatch:
@@ -35,18 +35,70 @@ jobs:
 
   build:
     needs: setup
-    runs-on: windows-latest
-    name: win64
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Install cmake + ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build
+
+      - name: Install ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      # UVAtlas leans on DirectXMath, and on DirectX-Headers for the D3D12 types it
+      # references. Both are Microsoft repos that install cleanly via CMake.
+      - name: Stage DirectXMath + DirectX-Headers (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          git clone --depth 1 https://github.com/microsoft/DirectXMath dxmath
+          cmake -S dxmath -B dxmath/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/deps"
+          cmake --build dxmath/build --parallel
+          cmake --install dxmath/build
+
+          git clone --depth 1 https://github.com/microsoft/DirectX-Headers dxheaders
+          cmake -S dxheaders -B dxheaders/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/deps" \
+            -DDXHEADERS_BUILD_TEST=OFF \
+            -DDXHEADERS_BUILD_GOOGLE_TEST=OFF
+          cmake --build dxheaders/build --parallel
+          cmake --install dxheaders/build
 
       - name: Clone UVAtlas ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/microsoft/UVAtlas src
 
-      - name: Build
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/deps" \
+            -DBUILD_TOOLS=OFF \
+            -DBUILD_SAMPLE=OFF
+          cmake --build src/build --parallel
+          cmake --install src/build
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cmake -S src -B src\build -G Ninja `
@@ -62,7 +114,7 @@ jobs:
         with:
           lib_name: uvatlas
           lib_version: ${{ needs.setup.outputs.lib_version }}
-          platform: win64
+          platform: ${{ matrix.platform }}
 
   release:
     needs: [setup, build]

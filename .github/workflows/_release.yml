@@ -21,12 +21,24 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Create GitHub Release
+      # Idempotent: re-running a build for a version that already has a release replaces
+      # its assets instead of failing. A plain `gh release create` dies with "already
+      # exists", which is what reddened libyuv - two runs from one push raced, the first
+      # created the release and the second could only fail.
+      - name: Create or update GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ inputs.release_tag }}" \
-            --repo "${{ github.repository }}" \
-            --title "${{ inputs.display_name }}" \
-            --notes "" \
-            artifacts/**
+          if gh release view "${{ inputs.release_tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release ${{ inputs.release_tag }} exists - replacing assets"
+            gh release upload "${{ inputs.release_tag }}" \
+              --repo "${{ github.repository }}" \
+              --clobber \
+              artifacts/**
+          else
+            gh release create "${{ inputs.release_tag }}" \
+              --repo "${{ github.repository }}" \
+              --title "${{ inputs.display_name }}" \
+              --notes "" \
+              artifacts/**
+          fi
