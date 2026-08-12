@@ -66,16 +66,23 @@ jobs:
       - name: Clone DXC ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --recurse-submodules --shallow-submodules --branch ${{ needs.setup.outputs.lib_version }} https://github.com/microsoft/DirectXShaderCompiler src
 
+      # DXC's LLVM fork specializes std::is_nothrow_constructible in ADT/StringRef.h, which
+      # current Apple Clang rejects as a hard error rather than a warning. Demote it back.
       - name: Build (Unix)
         if: runner.os != 'Windows'
         run: |
+          EXTRA=""
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            EXTRA="-DCMAKE_CXX_FLAGS=-Wno-invalid-specialization"
+          fi
           cmake -S src -B src/build -G Ninja \
             -C src/cmake/caches/PredefinedParams.cmake \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
             -DLLVM_INCLUDE_TESTS=OFF \
             -DCLANG_INCLUDE_TESTS=OFF \
-            -DHLSL_INCLUDE_TESTS=OFF
+            -DHLSL_INCLUDE_TESTS=OFF \
+            $EXTRA
           cmake --build src/build --parallel --target dxcompiler dxc
 
       - name: Build (Windows)
