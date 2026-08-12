@@ -67,10 +67,22 @@ jobs:
       - name: Clone embree ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/embree/embree src
 
+      # win64 builds AVX + AVX2 only. sbox forces /arch:AVX on Windows
+      # (SboxBuild Native/Platforms/Win64.cs), so a CPU without AVX cannot run the engine
+      # at all, and one with AVX always picks embree's AVX kernels over SSE42 - the lower
+      # kernels are unreachable there, and dropping them roughly halves this build.
+      #
+      # Linux keeps the full range down to SSE2, because LinuxSteamRt64.cs compiles with
+      # -msse2 and no AVX, so SIMDLEVEL_DEFAULT genuinely resolves to SSE2 there.
       - name: Select ISA flags
         id: isa
         shell: bash
-        run: echo "flags=-DEMBREE_MAX_ISA=AVX2 -DEMBREE_ISA_AVX512=OFF" >> $GITHUB_OUTPUT
+        run: |
+          if [ "${{ matrix.platform }}" = "win64" ]; then
+            echo "flags=-DEMBREE_ISA_SSE2=OFF -DEMBREE_ISA_SSE42=OFF -DEMBREE_ISA_AVX=ON -DEMBREE_ISA_AVX2=ON -DEMBREE_ISA_AVX512=OFF" >> $GITHUB_OUTPUT
+          else
+            echo "flags=-DEMBREE_MAX_ISA=AVX2 -DEMBREE_ISA_AVX512=OFF" >> $GITHUB_OUTPUT
+          fi
 
       - name: Build (Unix)
         if: runner.os != 'Windows'
