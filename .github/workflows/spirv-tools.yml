@@ -1,0 +1,141 @@
+name: Build spirv-tools
+
+# Source 2 only links SPIRV-Tools, SPIRV-Tools-opt and SPVRemapper, but SPVRemapper is a
+# glslang target and SPIRV-Tools is pulled in as a glslang subproject, so we build glslang
+# with ENABLE_OPT=ON and ship the resulting SPIR-V libraries. This mirrors what
+# src/thirdparty/spirv-tools/build_cmake_2022.bat used to do by hand.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'glslang tag (e.g. 14.3.0). SPIRV-Tools/SPIRV-Headers come from its known_good.json'
+        required: true
+        default: '14.3.0'
+  push:
+    tags: ['spirv-tools-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#spirv-tools-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=spirv-tools-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Install cmake + ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build
+
+      - name: Install ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Clone glslang ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/KhronosGroup/glslang src
+
+      - name: Fetch known-good SPIRV-Tools / SPIRV-Headers
+        working-directory: src
+        run: python update_glslang_sources.py
+
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DENABLE_OPT=ON \
+            -DENABLE_GLSLANG_BINARIES=OFF \
+            -DGLSLANG_TESTS=OFF \
+            -DBUILD_TESTING=OFF \
+            -DSPIRV_SKIP_TESTS=ON \
+            -DSPIRV_SKIP_EXECUTABLES=ON
+          cmake --build src/build --parallel
+          cmake --install src/build
+
+      # Static CRT (/MT) to match Source 2's RuntimeLibrary=MultiThreaded (see
+      # engine/Tools/SboxBuild/Native/Defaults.cs).
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S src -B src\build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DBUILD_SHARED_LIBS=OFF `
+            -DENABLE_OPT=ON `
+            -DENABLE_GLSLANG_BINARIES=OFF `
+            -DGLSLANG_TESTS=OFF `
+            -DBUILD_TESTING=OFF `
+            -DSPIRV_SKIP_TESTS=ON `
+            -DSPIRV_SKIP_EXECUTABLES=ON
+          cmake --build src\build --parallel
+          cmake --install src\build
+
+      # glslang installs its SPIR-V headers under include/glslang/SPIRV. Source 2 includes
+      # them as <SPIRV/...>, so mirror them to the top level and keep both layouts working.
+      - name: Mirror SPIRV headers (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          if [ -d dist/include/glslang/SPIRV ]; then
+            mkdir -p dist/include/SPIRV
+            cp -r dist/include/glslang/SPIRV/. dist/include/SPIRV/
+          fi
+
+      - name: Mirror SPIRV headers (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (Test-Path dist\include\glslang\SPIRV) {
+            New-Item -ItemType Directory -Force dist\include\SPIRV | Out-Null
+            Copy-Item -Recurse -Force dist\include\glslang\SPIRV\* dist\include\SPIRV\
+          }
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: spirv-tools
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "spirv-tools (glslang ${{ needs.setup.outputs.lib_version }})"
+    secrets: inherit

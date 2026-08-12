@@ -1,0 +1,101 @@
+name: Build FidelityFX-FSR3
+
+# AMD FidelityFX SDK, Vulkan backend only - Source 2 links ffx_fsr3upscaler_x64.lib and
+# ffx_backend_vk_x64.lib from src/rendersystem/rendersystemvulkan.build.cs.
+#
+# win64 only: the vendored copy is win64 only and the SDK's shader compilation step
+# (FidelityFX_SC) targets the Windows toolchain.
+#
+# This is the least settled workflow in the repo - AMD drive their build through
+# BuildFidelityFXSDK.bat rather than a plain CMake configure, so expect the first run to
+# need adjusting once we see how their CMake lays out its output.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'FidelityFX-SDK tag (e.g. v1.0.1, which ships FSR 3.0.4)'
+        required: true
+        default: 'v1.0.1'
+  push:
+    tags: ['fidelityfx-fsr3-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#fidelityfx-fsr3-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=fidelityfx-fsr3-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    runs-on: windows-latest
+    name: win64
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+
+      - name: Clone FidelityFX-SDK ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --recurse-submodules --shallow-submodules --branch ${{ needs.setup.outputs.lib_version }} https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK src
+
+      # The SDK compiles its shader permutations through FidelityFX_SC, which shells out
+      # to glslangValidator/dxc from the Vulkan SDK.
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan_sdk.exe" -OutFile vulkan_sdk.exe
+          Start-Process -FilePath .\vulkan_sdk.exe -ArgumentList '--accept-licenses','--default-answer','--confirm-command','install' -Wait -NoNewWindow
+          $sdk = (Get-ChildItem 'C:\VulkanSDK' -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName
+          if (-not $sdk) { throw "Vulkan SDK not found after install" }
+          Add-Content -Path $env:GITHUB_ENV -Value "VULKAN_SDK=$sdk"
+          Add-Content -Path $env:GITHUB_PATH -Value "$sdk\Bin"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build SDK (Vulkan backend, FSR3)
+        shell: pwsh
+        working-directory: src/sdk
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+            -DFFX_API_BACKEND=VK_X64 `
+            -DFFX_FSR3=ON `
+            -DFFX_AUTO_COMPILE_SHADERS=ON
+          cmake --build build --config Release --parallel
+
+      - name: Stage dist
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist\include, dist\lib | Out-Null
+          Copy-Item -Recurse src\sdk\include\* dist\include\
+          Get-ChildItem src\sdk -Recurse -Include ffx_fsr3upscaler_x64.lib,ffx_fsr3_x64.lib,ffx_backend_vk_x64.lib,ffx_opticalflow_x64.lib,ffx_frameinterpolation_x64.lib |
+            Copy-Item -Destination dist\lib\
+          if (-not (Get-ChildItem dist\lib -Filter *.lib)) { throw "No FidelityFX libraries were produced" }
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: fidelityfx-fsr3
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: win64
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "FidelityFX-FSR3 ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit

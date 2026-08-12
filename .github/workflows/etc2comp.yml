@@ -1,0 +1,117 @@
+name: Build etc2comp
+
+# google/etc2comp is abandoned and has no tags, so lib_version is a branch or commit SHA.
+# Only EtcLib is built; EtcTool (the command line frontend) is not used by Source 2.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'etc2comp branch or commit SHA (e.g. master)'
+        required: true
+        default: 'master'
+  push:
+    tags: ['etc2comp-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#etc2comp-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=etc2comp-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Install cmake + ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build
+
+      - name: Install ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Clone etc2comp ${{ needs.setup.outputs.lib_version }}
+        run: |
+          git clone https://github.com/google/etc2comp src
+          git -C src checkout ${{ needs.setup.outputs.lib_version }}
+
+      # CMAKE_POLICY_VERSION_MINIMUM is required because etc2comp declares
+      # cmake_minimum_required(VERSION 2.8), which CMake 4.x refuses outright.
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+          cmake --build src/build --parallel --target EtcLib
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S src -B src\build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          cmake --build src\build --parallel --target EtcLib
+
+      # etc2comp has no install target, so stage headers and the static lib by hand into
+      # the dist/ layout the collect action expects.
+      - name: Stage dist (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist/include/Etc dist/include/EtcCodec dist/lib
+          cp src/EtcLib/Etc/*.h dist/include/Etc/
+          cp src/EtcLib/EtcCodec/*.h dist/include/EtcCodec/
+          find src/build -name "libEtcLib.a" -exec cp {} dist/lib/ \;
+
+      - name: Stage dist (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist\include\Etc, dist\include\EtcCodec, dist\lib | Out-Null
+          Copy-Item src\EtcLib\Etc\*.h dist\include\Etc\
+          Copy-Item src\EtcLib\EtcCodec\*.h dist\include\EtcCodec\
+          Get-ChildItem src\build -Recurse -Filter EtcLib.lib | Copy-Item -Destination dist\lib\
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: etc2comp
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "etc2comp ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit

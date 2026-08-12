@@ -1,0 +1,104 @@
+name: Build openexr
+
+# IlmBase + OpenEXR, consumed by src/modeldoc_utils (Imath types for Alembic interop).
+#
+# sbox vendors 2.2.1 (2014), which does not compile on VS2022. The default here is the
+# last 2.5.x release: still the IlmBase-era layout, so headers stay at <OpenEXR/...> and
+# the Half/Iex/Imath/IlmThread/IlmImf split is unchanged. Do NOT jump to 3.x - that
+# replaces IlmBase with Imath and moves headers to <Imath/...>, which is a source change
+# in modeldoc_utils, not a dependency move.
+#
+# win64 only, matching modeldoc_utils.build.cs (`if ( Windows ) LibDir( ... )`).
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'OpenEXR tag (e.g. v2.5.8)'
+        required: true
+        default: 'v2.5.8'
+      zlib_version:
+        description: 'zlib tag to build against'
+        required: true
+        default: 'v1.3.1'
+  push:
+    tags: ['openexr-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+      zlib_version: ${{ steps.ver.outputs.zlib_version }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#openexr-}"
+            Z="v1.3.1"
+          else
+            V="${{ inputs.lib_version }}"
+            Z="${{ inputs.zlib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "zlib_version=$Z" >> $GITHUB_OUTPUT
+          echo "release_tag=openexr-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    runs-on: windows-latest
+    name: win64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+
+      # OpenEXR needs zlib and the runner has none, so build a static /MT one first.
+      - name: Build zlib ${{ needs.setup.outputs.zlib_version }}
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch ${{ needs.setup.outputs.zlib_version }} https://github.com/madler/zlib zlib-src
+          cmake -S zlib-src -B zlib-build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\zlib-dist" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          cmake --build zlib-build --parallel
+          cmake --install zlib-build
+
+      - name: Clone OpenEXR ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/AcademySoftwareFoundation/openexr src
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake -S src -B src\build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DCMAKE_PREFIX_PATH="$env:GITHUB_WORKSPACE\zlib-dist" `
+            -DZLIB_ROOT="$env:GITHUB_WORKSPACE\zlib-dist" `
+            -DZLIB_USE_STATIC_LIBS=ON `
+            -DBUILD_SHARED_LIBS=OFF `
+            -DBUILD_TESTING=OFF `
+            -DOPENEXR_BUILD_UTILS=OFF `
+            -DOPENEXR_VIEWERS_ENABLE=OFF `
+            -DPYILMBASE_ENABLE=OFF `
+            -DOPENEXR_INSTALL_EXAMPLES=OFF
+          cmake --build src\build --parallel
+          cmake --install src\build
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: openexr
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: win64
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "openexr ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit

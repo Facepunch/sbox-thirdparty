@@ -1,0 +1,125 @@
+name: Build embree
+
+# Settings follow src/thirdparty/embree/README_VALVE.txt: no ISPC, internal tasking
+# (so we don't drag in TBB) and no tutorials. Source 2 links the static embree3.
+#
+# NOTE: sbox currently vendors 3.6.1 (2019). That release predates GCC 13 / Clang 17 and
+# does not compile on current runners, so the default here is the last 3.x release. The
+# embree3 API is stable across 3.x, so this is a drop-in for our usage (point queries +
+# raytracing in lightinglib / mapdoclib).
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'embree tag (e.g. v3.13.5)'
+        required: true
+        default: 'v3.13.5'
+  push:
+    tags: ['embree-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#embree-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=embree-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64,              arm: false }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64,     arm: false }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64,  arm: true  }
+          - { os: macos-26,         platform: osxarm64,           arm: true  }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Install cmake + ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build
+
+      - name: Install ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Clone embree ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/embree/embree src
+
+      # On aarch64 the x86 ISA targets must be turned off and NEON turned on, otherwise
+      # embree tries to build its SSE/AVX kernels.
+      - name: Select ISA flags
+        id: isa
+        shell: bash
+        run: |
+          if [ "${{ matrix.arm }}" = "true" ]; then
+            echo "flags=-DEMBREE_ISA_NEON=ON -DEMBREE_ISA_SSE2=OFF -DEMBREE_ISA_SSE42=OFF -DEMBREE_ISA_AVX=OFF -DEMBREE_ISA_AVX2=OFF -DEMBREE_ISA_AVX512=OFF" >> $GITHUB_OUTPUT
+          else
+            echo "flags=-DEMBREE_MAX_ISA=AVX2 -DEMBREE_ISA_AVX512=OFF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DEMBREE_STATIC_LIB=ON \
+            -DEMBREE_ISPC_SUPPORT=OFF \
+            -DEMBREE_TASKING_SYSTEM=INTERNAL \
+            -DEMBREE_TUTORIALS=OFF \
+            -DEMBREE_ZIP_MODE=OFF \
+            ${{ steps.isa.outputs.flags }}
+          cmake --build src/build --parallel
+          cmake --install src/build
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S src -B src\build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DEMBREE_STATIC_LIB=ON `
+            -DEMBREE_ISPC_SUPPORT=OFF `
+            -DEMBREE_TASKING_SYSTEM=INTERNAL `
+            -DEMBREE_TUTORIALS=OFF `
+            -DEMBREE_ZIP_MODE=OFF `
+            ${{ steps.isa.outputs.flags }}
+          cmake --build src\build --parallel
+          cmake --install src\build
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: embree
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "embree ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit

@@ -1,0 +1,130 @@
+name: Build qt5
+
+# Builds Facepunch/qt - our patched Qt 5.15.2, itself based on Valve's build. This does
+# NOT build upstream Qt: the fork carries QDockWidget changes that the tools UI depends on
+# (see that repo's README), so upstream would produce a subtly different editor.
+#
+# The fork is self-contained - it vendors jom and gnuwin32 - so all we add is MSVC, the
+# checkout and the packaging. Build steps mirror Facepunch/qt's own .github/workflows/ci.yml.
+#
+# win64 only: src/thirdparty/lgpl/qt5 is win64 only, and fp_config.bat configures for
+# win32-msvc with -prefix build_win64.
+#
+# This one does not use the shared collect-package-upload action. Qt needs its moc/rcc/uic
+# host tools and its platform/imageformats plugin trees preserved as a directory layout,
+# and that action flattens everything into lib/.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'Facepunch/qt ref (branch, tag or commit SHA)'
+        required: true
+        default: 'master'
+  push:
+    tags: ['qt5-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#qt5-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=qt5-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    runs-on: windows-latest
+    name: win64
+    timeout-minutes: 300
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+
+      # LFS matters here - the fork stores build tooling (jom, gnuwin32) in LFS, and a
+      # non-LFS checkout silently yields pointer files that fail at exec time.
+      - name: Clone Facepunch/qt ${{ needs.setup.outputs.lib_version }}
+        uses: actions/checkout@v4
+        with:
+          repository: Facepunch/qt
+          ref: ${{ needs.setup.outputs.lib_version }}
+          path: qt
+          lfs: true
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Configure
+        working-directory: qt/valve
+        shell: cmd
+        run: fp_config.bat
+
+      - name: Build
+        working-directory: qt/valve
+        shell: cmd
+        run: jom\jom.exe
+
+      - name: Install
+        working-directory: qt/valve
+        shell: cmd
+        run: jom\jom.exe install
+
+      # Mirror the layout src/thirdparty/lgpl/qt5 expects: include/, lib/, bin/ (Qt5Core.dll
+      # plus the moc/rcc/uic host tools) and plugins/. The versioned include subdirectories
+      # (QtCore/5.15.2/...) are private Qt internals and are dropped, as in the fork's CI.
+      - name: Stage dist
+        shell: pwsh
+        run: |
+          $build = "qt\valve\build_win64"
+          if (-not (Test-Path $build)) { throw "Qt install prefix $build not found" }
+
+          New-Item -ItemType Directory -Force dist\include, dist\lib, dist\bin, dist\plugins | Out-Null
+
+          foreach ($m in @('QtCore','QtGui','QtWidgets','QtConcurrent','QtNetwork','QtUiTools')) {
+            $src = Join-Path $build "include\$m"
+            if (Test-Path $src) {
+              Copy-Item -Recurse -Force $src dist\include\
+              Get-ChildItem "dist\include\$m" -Directory -Filter '5.15.2*' |
+                Remove-Item -Recurse -Force
+            }
+          }
+
+          Copy-Item "$build\lib\Qt5*.lib" dist\lib\
+          Copy-Item "$build\bin\Qt5*.dll" dist\bin\
+          foreach ($tool in @('moc','rcc','uic')) {
+            Get-ChildItem "$build\bin" -Filter "$tool.*" | Copy-Item -Destination dist\bin\
+          }
+          foreach ($p in @('platforms','imageformats')) {
+            if (Test-Path "$build\plugins\$p") {
+              Copy-Item -Recurse -Force "$build\plugins\$p" dist\plugins\
+            }
+          }
+
+          if (-not (Get-ChildItem dist\lib -Filter Qt5Core.lib)) { throw "Qt5Core.lib missing from staged output" }
+
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path dist\* -DestinationPath "qt5-${{ needs.setup.outputs.lib_version }}-win64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qt5-win64
+          path: qt5-${{ needs.setup.outputs.lib_version }}-win64.zip
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "qt5 (Facepunch/qt ${{ needs.setup.outputs.lib_version }})"
+    secrets: inherit

@@ -1,0 +1,117 @@
+name: Build SDL3
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'SDL tag (e.g. release-3.5.0)'
+        required: true
+        default: 'release-3.5.0'
+  push:
+    tags: ['sdl3-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#sdl3-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=sdl3-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      # SDL needs the X11/Wayland/ALSA/PipeWire dev headers to build its Linux video and
+      # audio backends; without them CMake silently drops those backends.
+      - name: Install build deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake ninja-build pkg-config \
+            libasound2-dev libpulse-dev libaudio-dev libjack-dev libsndio-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+            libxi-dev libxss-dev libxkbcommon-dev libdrm-dev libgbm-dev \
+            libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev libdbus-1-dev \
+            libibus-1.0-dev libudev-dev libpipewire-0.3-dev libwayland-dev \
+            wayland-protocols libdecor-0-dev
+
+      - name: Install ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Clone SDL ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/libsdl-org/SDL src
+
+      # Source 2 links the shared SDL3 but the static lib is shipped too, matching what
+      # src/thirdparty/sdl3/lib currently carries. Two configures, one install prefix.
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          for shared in ON OFF; do
+            cmake -S src -B "src/build-$shared" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+              -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+              -DBUILD_SHARED_LIBS=$shared \
+              -DSDL_SHARED=$shared -DSDL_STATIC=$([ "$shared" = "ON" ] && echo OFF || echo ON) \
+              -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_INSTALL_TESTS=OFF
+            cmake --build "src/build-$shared" --parallel
+            cmake --install "src/build-$shared"
+          done
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($shared in @('ON','OFF')) {
+            $static = if ($shared -eq 'ON') { 'OFF' } else { 'ON' }
+            $crt    = if ($shared -eq 'ON') { 'MultiThreadedDLL' } else { 'MultiThreaded' }
+            cmake -S src -B "src\build-$shared" -G Ninja `
+              -DCMAKE_BUILD_TYPE=Release `
+              -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+              -DCMAKE_MSVC_RUNTIME_LIBRARY=$crt `
+              -DBUILD_SHARED_LIBS=$shared `
+              -DSDL_SHARED=$shared -DSDL_STATIC=$static `
+              -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_INSTALL_TESTS=OFF
+            cmake --build "src\build-$shared" --parallel
+            cmake --install "src\build-$shared"
+          }
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: sdl3
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "SDL3 ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit

@@ -1,0 +1,123 @@
+name: Build dxc
+
+# DirectXShaderCompiler. This is an LLVM fork, so expect 40-90 minutes per platform.
+# PredefinedParams.cmake is DXC's own cache file and sets every option their build needs;
+# we only add the build type and install prefix on top of it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'DXC tag (e.g. v1.8.2505)'
+        required: true
+        default: 'v1.8.2505'
+  push:
+    tags: ['dxc-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#dxc-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=dxc-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Install cmake + ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build
+
+      - name: Install ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Clone DXC ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --recurse-submodules --shallow-submodules --branch ${{ needs.setup.outputs.lib_version }} https://github.com/microsoft/DirectXShaderCompiler src
+
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -C src/cmake/caches/PredefinedParams.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DCLANG_INCLUDE_TESTS=OFF \
+            -DHLSL_INCLUDE_TESTS=OFF
+          cmake --build src/build --parallel --target dxcompiler dxc
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S src -B src\build -G Ninja `
+            -C src\cmake\caches\PredefinedParams.cmake `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+            -DLLVM_INCLUDE_TESTS=OFF `
+            -DCLANG_INCLUDE_TESTS=OFF `
+            -DHLSL_INCLUDE_TESTS=OFF
+          cmake --build src\build --parallel --target dxcompiler dxc
+
+      # DXC has no install target that produces an SDK layout, so stage the public headers
+      # and the compiler binaries by hand.
+      - name: Stage dist (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist/include/dxc dist/lib
+          cp -r src/include/dxc/. dist/include/dxc/
+          find src/build/lib src/build/bin -maxdepth 1 \( -name "libdxcompiler.so*" -o -name "libdxcompiler.dylib" \) -exec cp {} dist/lib/ \;
+
+      - name: Stage dist (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist\include\dxc, dist\lib | Out-Null
+          Copy-Item -Recurse src\include\dxc\* dist\include\dxc\
+          Get-ChildItem src\build -Recurse -Include dxcompiler.dll,dxcompiler.lib | Copy-Item -Destination dist\lib\
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: dxc
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "dxc ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit

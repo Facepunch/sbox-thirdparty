@@ -1,0 +1,142 @@
+name: Build ispc_texcomp
+
+# GameTechDev/ISPCTextureCompressor has no releases and no CMake, so this reimplements
+# its Makefile.linux / ispc_texcomp.vcxproj: compile the two .ispc kernels for sse2+avx,
+# compile the two .cpp wrappers, link a shared library.
+#
+# Only win64 and linuxsteamrt64 are built - the kernels are x86-only (sse2/avx), and
+# Source 2 only loads ispc_texcomp on Windows today (src/bitmap/ispc_compressor_loader.cpp).
+#
+# The vendored copy in sbox also carries a Valve-added crtoverride.cpp. It is inert - the
+# whole file sits behind #if defined( USE_VCRT ), which the vcxproj never defines - so it
+# is intentionally not carried over here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'ISPCTextureCompressor branch or commit SHA'
+        required: true
+        default: 'master'
+      ispc_version:
+        description: 'ISPC compiler release to build the kernels with'
+        required: true
+        default: 'v1.25.3'
+  push:
+    tags: ['ispc-texcomp-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+      ispc_version: ${{ steps.ver.outputs.ispc_version }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#ispc-texcomp-}"
+            ISPC="v1.25.3"
+          else
+            V="${{ inputs.lib_version }}"
+            ISPC="${{ inputs.ispc_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "ispc_version=$ISPC" >> $GITHUB_OUTPUT
+          echo "release_tag=ispc-texcomp-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, platform: win64 }
+          - { os: ubuntu-24.04,   platform: linuxsteamrt64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Clone ISPCTextureCompressor ${{ needs.setup.outputs.lib_version }}
+        run: |
+          git clone https://github.com/GameTechDev/ISPCTextureCompressor src
+          git -C src checkout ${{ needs.setup.outputs.lib_version }}
+
+      - name: Install ISPC ${{ needs.setup.outputs.ispc_version }} (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          V="${{ needs.setup.outputs.ispc_version }}"
+          curl -fsSL -o ispc.tar.gz "https://github.com/ispc/ispc/releases/download/$V/ispc-$V-linux.tar.gz"
+          mkdir -p ispc && tar xzf ispc.tar.gz -C ispc --strip-components=1
+          echo "$GITHUB_WORKSPACE/ispc/bin" >> $GITHUB_PATH
+
+      - name: Install ISPC ${{ needs.setup.outputs.ispc_version }} (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $v = "${{ needs.setup.outputs.ispc_version }}"
+          Invoke-WebRequest -Uri "https://github.com/ispc/ispc/releases/download/$v/ispc-$v-windows.zip" -OutFile ispc.zip
+          Expand-Archive ispc.zip -DestinationPath ispc_dl
+          $bin = (Get-ChildItem ispc_dl -Recurse -Filter ispc.exe | Select-Object -First 1).DirectoryName
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        working-directory: src/ispc_texcomp
+        run: |
+          for k in kernel kernel_astc; do
+            ispc -O2 --arch=x86-64 --target=sse2,avx --opt=fast-math --pic \
+              -o "${k}_ispc.o" -h "${k}_ispc.h" "${k}.ispc"
+          done
+          g++ -O2 -msse2 -fPIC -I. -c ispc_texcomp.cpp -o ispc_texcomp.o
+          g++ -O2 -msse2 -fPIC -I. -c ispc_texcomp_astc.cpp -o ispc_texcomp_astc.o
+          mkdir -p "$GITHUB_WORKSPACE/dist/lib" "$GITHUB_WORKSPACE/dist/include"
+          g++ -shared -rdynamic -o "$GITHUB_WORKSPACE/dist/lib/libispc_texcomp.so" \
+            kernel_ispc.o kernel_ispc_sse2.o kernel_ispc_avx.o \
+            kernel_astc_ispc.o kernel_astc_ispc_sse2.o kernel_astc_ispc_avx.o \
+            ispc_texcomp.o ispc_texcomp_astc.o
+          cp ispc_texcomp.h "$GITHUB_WORKSPACE/dist/include/"
+
+      # /MD here: ispc_texcomp is consumed as a DLL loaded at runtime, so it owns its own
+      # CRT rather than sharing Source 2's static one.
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: src/ispc_texcomp
+        run: |
+          foreach ($k in @('kernel','kernel_astc')) {
+            ispc -O2 --arch=x86-64 --target=sse2,avx --opt=fast-math `
+              -o "${k}_ispc.obj" -h "${k}_ispc.h" "${k}.ispc"
+            if ($LASTEXITCODE -ne 0) { throw "ispc failed on $k" }
+          }
+          cl /nologo /c /O2 /MD /EHsc /I. ispc_texcomp.cpp ispc_texcomp_astc.cpp
+          if ($LASTEXITCODE -ne 0) { throw "cl failed" }
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\dist\lib", "$env:GITHUB_WORKSPACE\dist\include" | Out-Null
+          link /nologo /DLL /DEF:ispc_texcomp.def `
+            /OUT:"$env:GITHUB_WORKSPACE\dist\lib\ispc_texcomp.dll" `
+            /IMPLIB:"$env:GITHUB_WORKSPACE\dist\lib\ispc_texcomp.lib" `
+            kernel_ispc.obj kernel_ispc_sse2.obj kernel_ispc_avx.obj `
+            kernel_astc_ispc.obj kernel_astc_ispc_sse2.obj kernel_astc_ispc_avx.obj `
+            ispc_texcomp.obj ispc_texcomp_astc.obj
+          if ($LASTEXITCODE -ne 0) { throw "link failed" }
+          Copy-Item ispc_texcomp.h "$env:GITHUB_WORKSPACE\dist\include\"
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: ispc-texcomp
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "ispc_texcomp ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit

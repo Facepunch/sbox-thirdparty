@@ -1,0 +1,125 @@
+name: Build oidn
+
+# Intel Open Image Denoise, used by src/utils/vrad3 to denoise baked lighting.
+#
+# sbox vendors 1.1.0 (2019). The default here is the last 1.4.x, which keeps the same
+# oidn 1.x C API (oidnNewDevice / oidnNewFilter / oidnSetSharedFilterImage / oidnExecute)
+# so vrad3 needs no source change. Do NOT jump to 2.x - that reworks the device/API model.
+#
+# win64 only, matching vrad3.build.cs. TBB and ISPC are pulled in as prebuilt releases;
+# both are build-time toolchain inputs for oidn rather than things we ship from source.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'oidn tag (e.g. v1.4.3)'
+        required: true
+        default: 'v1.4.3'
+      tbb_version:
+        description: 'oneTBB release to build against'
+        required: true
+        default: '2021.13.0'
+      ispc_version:
+        description: 'ISPC compiler release'
+        required: true
+        default: 'v1.25.3'
+  push:
+    tags: ['oidn-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+      tbb_version: ${{ steps.ver.outputs.tbb_version }}
+      ispc_version: ${{ steps.ver.outputs.ispc_version }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#oidn-}"
+            TBB="2021.13.0"; ISPC="v1.25.3"
+          else
+            V="${{ inputs.lib_version }}"
+            TBB="${{ inputs.tbb_version }}"; ISPC="${{ inputs.ispc_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "tbb_version=$TBB" >> $GITHUB_OUTPUT
+          echo "ispc_version=$ISPC" >> $GITHUB_OUTPUT
+          echo "release_tag=oidn-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    runs-on: windows-latest
+    name: win64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ISPC ${{ needs.setup.outputs.ispc_version }}
+        shell: pwsh
+        run: |
+          $v = "${{ needs.setup.outputs.ispc_version }}"
+          Invoke-WebRequest -Uri "https://github.com/ispc/ispc/releases/download/$v/ispc-$v-windows.zip" -OutFile ispc.zip
+          Expand-Archive ispc.zip -DestinationPath ispc_dl
+          $exe = (Get-ChildItem ispc_dl -Recurse -Filter ispc.exe | Select-Object -First 1).FullName
+          if (-not $exe) { throw "ispc.exe not found in release archive" }
+          Add-Content -Path $env:GITHUB_ENV -Value "ISPC_EXECUTABLE=$exe"
+
+      - name: Install oneTBB ${{ needs.setup.outputs.tbb_version }}
+        shell: pwsh
+        run: |
+          $v = "${{ needs.setup.outputs.tbb_version }}"
+          Invoke-WebRequest -Uri "https://github.com/uxlfoundation/oneTBB/releases/download/v$v/oneapi-tbb-$v-win.zip" -OutFile tbb.zip
+          Expand-Archive tbb.zip -DestinationPath tbb_dl
+          $root = (Get-ChildItem tbb_dl -Directory -Filter "oneapi-tbb-*" | Select-Object -First 1).FullName
+          if (-not $root) { throw "oneTBB root not found in release archive" }
+          Add-Content -Path $env:GITHUB_ENV -Value "TBB_ROOT=$root"
+
+      - name: Clone oidn ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --recurse-submodules --shallow-submodules --branch ${{ needs.setup.outputs.lib_version }} https://github.com/RenderKit/oidn src
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake -S src -B src\build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+            -DISPC_EXECUTABLE="$env:ISPC_EXECUTABLE" `
+            -DTBB_ROOT="$env:TBB_ROOT" `
+            -DOIDN_STATIC_LIB=OFF `
+            -DOIDN_APPS=OFF
+          cmake --build src\build --parallel
+          cmake --install src\build
+
+      # oidn's DLL has a hard runtime dependency on TBB, and sbox ships tbb.dll next to it
+      # today, so carry the redistributables in the same archive.
+      - name: Stage TBB redistributables
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist\lib | Out-Null
+          Get-ChildItem "$env:TBB_ROOT" -Recurse -Include tbb12.dll,tbb.dll,tbbmalloc.dll |
+            Where-Object { $_.FullName -notmatch 'debug' } |
+            Copy-Item -Destination dist\lib\ -Force
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: oidn
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: win64
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "oidn ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit

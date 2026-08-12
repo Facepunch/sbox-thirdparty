@@ -1,0 +1,122 @@
+name: Build alembic
+
+# Alembic, consumed by src/modeldoc_utils. sbox vendors 1.7.11; the default here is the
+# last 1.7.x, which still links against IlmBase rather than Imath 3.x - see the note in
+# openexr.yml for why staying on the IlmBase line matters.
+#
+# IlmBase is built inline as a private dependency rather than pulled from the openexr
+# release, so this workflow stays independently runnable. Keep ilmbase_version in step
+# with whatever openexr.yml last published.
+#
+# win64 only, matching modeldoc_utils.build.cs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'Alembic tag (e.g. 1.7.16)'
+        required: true
+        default: '1.7.16'
+      ilmbase_version:
+        description: 'OpenEXR/IlmBase tag to build against'
+        required: true
+        default: 'v2.5.8'
+  push:
+    tags: ['alembic-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+      ilmbase_version: ${{ steps.ver.outputs.ilmbase_version }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#alembic-}"
+            I="v2.5.8"
+          else
+            V="${{ inputs.lib_version }}"
+            I="${{ inputs.ilmbase_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "ilmbase_version=$I" >> $GITHUB_OUTPUT
+          echo "release_tag=alembic-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    runs-on: windows-latest
+    name: win64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+
+      - name: Build zlib
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch v1.3.1 https://github.com/madler/zlib zlib-src
+          cmake -S zlib-src -B zlib-build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\deps" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          cmake --build zlib-build --parallel
+          cmake --install zlib-build
+
+      - name: Build IlmBase ${{ needs.setup.outputs.ilmbase_version }}
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch ${{ needs.setup.outputs.ilmbase_version }} https://github.com/AcademySoftwareFoundation/openexr openexr-src
+          cmake -S openexr-src -B openexr-build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\deps" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DCMAKE_PREFIX_PATH="$env:GITHUB_WORKSPACE\deps" `
+            -DZLIB_ROOT="$env:GITHUB_WORKSPACE\deps" `
+            -DZLIB_USE_STATIC_LIBS=ON `
+            -DBUILD_SHARED_LIBS=OFF `
+            -DBUILD_TESTING=OFF `
+            -DOPENEXR_BUILD_UTILS=OFF `
+            -DOPENEXR_VIEWERS_ENABLE=OFF `
+            -DPYILMBASE_ENABLE=OFF
+          cmake --build openexr-build --parallel
+          cmake --install openexr-build
+
+      - name: Clone Alembic ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/alembic/alembic src
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake -S src -B src\build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DCMAKE_PREFIX_PATH="$env:GITHUB_WORKSPACE\deps" `
+            -DILMBASE_ROOT="$env:GITHUB_WORKSPACE\deps" `
+            -DALEMBIC_SHARED_LIBS=OFF `
+            -DALEMBIC_ILMBASE_LINK_STATIC=ON `
+            -DUSE_HDF5=OFF `
+            -DUSE_TESTS=OFF `
+            -DUSE_BINARIES=OFF `
+            -DUSE_EXAMPLES=OFF `
+            -DALEMBIC_BUILD_LIBS=ON
+          cmake --build src\build --parallel
+          cmake --install src\build
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: alembic
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: win64
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "alembic ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit

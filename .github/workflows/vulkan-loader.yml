@@ -1,0 +1,110 @@
+name: Build vulkan-loader
+
+# The Vulkan loader (vulkan-1.lib / libvulkan.so) that src/thirdparty/vulkan/lib carries.
+# The headers, VMA and volk that sit alongside it in that directory are source/header-only
+# and stay vendored in sbox - only the loader binary is built here.
+#
+# UPDATE_DEPS=ON lets the loader fetch the matching Vulkan-Headers revision itself, which
+# keeps the loader and headers in step without us pinning two versions by hand.
+#
+# No osxarm64: macOS goes through MoltenVK rather than the Khronos loader.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'Vulkan-Loader tag (e.g. v1.4.313)'
+        required: true
+        default: 'v1.4.313'
+  push:
+    tags: ['vulkan-loader-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#vulkan-loader-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=vulkan-loader-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      # The loader links against X11/Wayland/XCB for its WSI entry points on Linux.
+      - name: Install build deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake ninja-build pkg-config \
+            libx11-dev libxrandr-dev libxcb1-dev libx11-xcb-dev \
+            libxcb-randr0-dev libwayland-dev wayland-protocols
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Clone Vulkan-Loader ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/KhronosGroup/Vulkan-Loader src
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+            -DUPDATE_DEPS=ON \
+            -DBUILD_TESTS=OFF
+          cmake --build src/build --parallel
+          cmake --install src/build
+
+      # /MD: the loader is a DLL, so it owns its own CRT.
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S src -B src\build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL `
+            -DUPDATE_DEPS=ON `
+            -DBUILD_TESTS=OFF
+          cmake --build src\build --parallel
+          cmake --install src\build
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: vulkan-loader
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "vulkan-loader ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit

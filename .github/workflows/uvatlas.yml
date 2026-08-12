@@ -1,0 +1,73 @@
+name: Build uvatlas
+
+# UVAtlas.lib, which sbox keeps in the oddly-named src/thirdparty/lib/common/<plat>/vc14/.
+# Microsoft tag their releases by month (e.g. jun2025) rather than semver.
+#
+# win64 only - the win32/vc14 copy in the tree is legacy and nothing in the current
+# .build.cs set references a 32-bit configuration.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'UVAtlas release tag (e.g. jun2025)'
+        required: true
+        default: 'jun2025'
+  push:
+    tags: ['uvatlas-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#uvatlas-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=uvatlas-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    runs-on: windows-latest
+    name: win64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+
+      - name: Clone UVAtlas ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/microsoft/UVAtlas src
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake -S src -B src\build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DBUILD_TOOLS=OFF `
+            -DBUILD_SAMPLE=OFF
+          cmake --build src\build --parallel
+          cmake --install src\build
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: uvatlas
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: win64
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "UVAtlas ${{ needs.setup.outputs.lib_version }}"
+    secrets: inherit
