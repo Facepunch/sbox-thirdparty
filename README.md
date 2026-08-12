@@ -14,7 +14,6 @@ Prebuilt static libraries for [sbox](https://github.com/Facepunch/sbox), built v
 | [libwebm](https://github.com/webmproject/libwebm) | 1.0.0.32 | WebM/MKV demuxer (mkvparser) |
 | [libcurl](https://curl.se/libcurl/) | 8.12.1 | HTTP/HTTPS streaming |
 | [libyuv](https://chromium.googlesource.com/libyuv/libyuv/) | main | RGBA↔I420 color conversion (SIMD) |
-| [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) | v1.5.1 | Valve's reliable UDP networking library |
 | [SDL3](https://github.com/libsdl-org/SDL) | release-3.5.0 | Windowing / input / audio backend |
 | [embree](https://github.com/embree/embree) | v3.13.5 | CPU raytracing (lightmap bakes, mapdoc picking) |
 | [etc2comp](https://github.com/google/etc2comp) | master | ETC2 texture compression |
