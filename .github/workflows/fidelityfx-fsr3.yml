@@ -73,20 +73,20 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Ninja rather than the VS generator: windows-latest ships VS 2026 now, so
-      # -G "Visual Studio 17 2022" fails with "could not find any instance of Visual
-      # Studio". setup-msvc has already put the toolchain on PATH.
+      # No -G: AMD's CMake assumes a multi-config Visual Studio generator and fails under
+      # Ninja with "CMAKE_C_COMPILER not set, after EnableLanguage". Hardcoding a VS
+      # generator name is no good either, since the runner image moves between VS major
+      # versions (it is on VS 2026 now), so let CMake pick whichever VS is installed.
       - name: Build SDK (Vulkan backend, FSR3)
         shell: pwsh
         working-directory: src/sdk
         run: |
-          cmake -B build -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
+          cmake -B build -A x64 `
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" `
             -DFFX_API_BACKEND=VK_X64 `
             -DFFX_FSR3=ON `
             -DFFX_AUTO_COMPILE_SHADERS=ON
-          cmake --build build --parallel
+          cmake --build build --config Release --parallel
 
       - name: Stage dist
         shell: pwsh
