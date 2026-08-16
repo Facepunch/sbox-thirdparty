@@ -87,8 +87,15 @@ jobs:
           cmake --build src/build --parallel
           cmake --install src/build
 
-      # Static CRT (/MT) to match Source 2's RuntimeLibrary=MultiThreaded (see
-      # engine/Tools/SboxBuild/Native/Defaults.cs).
+      # Static CRT (/MT) to match Source 2's RuntimeLibrary=MultiThreaded.
+      #
+      # _USE_STD_VECTOR_ALGORITHMS=0 stops the MSVC STL emitting calls to its vectorised
+      # algorithm helpers (__std_max_element_4u and friends). Those live in the STL's own
+      # library and only exist from the toolset that introduced them, so a lib built on the
+      # runner's MSVC fails to link on a developer machine one version behind:
+      #   SPIRV-Tools.lib(disassemble.cpp.obj): unresolved external __std_max_element_4u
+      # MSVC libraries are forward compatible, not backward, so the artifact must avoid the
+      # newest symbols rather than expect everyone to upgrade in lockstep.
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -97,6 +104,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            "-DCMAKE_CXX_FLAGS=/D_USE_STD_VECTOR_ALGORITHMS=0" `
             -DBUILD_SHARED_LIBS=OFF `
             -DENABLE_OPT=ON `
             -DENABLE_GLSLANG_BINARIES=OFF `
