@@ -95,7 +95,10 @@ jobs:
           ispc -O2 --arch=x86-64 --target=sse2,avx,avx2 --opt=fast-math --pic \
             -o bc7e_ispc.o -h bc7e_ispc.h bc7e.ispc
           g++ -O2 -fPIC -fvisibility=hidden -I. -c "$GITHUB_WORKSPACE/shims/bc7enc/bc7enc_shim.cpp" -o bc7enc_shim.o
-          mkdir -p "$GITHUB_WORKSPACE/dist/lib"
+          mkdir -p "$GITHUB_WORKSPACE/dist/lib" "$GITHUB_WORKSPACE/dist/include"
+          # ISPC generates this header; ship it so the archive documents the params
+          # struct, and because collect-package-upload requires a dist/include.
+          cp bc7e_ispc.h "$GITHUB_WORKSPACE/dist/include/"
           g++ -shared -o "$GITHUB_WORKSPACE/dist/lib/libbc7enc.so" \
             bc7enc_shim.o bc7e_ispc.o bc7e_ispc_sse2.o bc7e_ispc_avx.o bc7e_ispc_avx2.o
           nm -D --defined-only "$GITHUB_WORKSPACE/dist/lib/libbc7enc.so" | grep -q InitalizeModule
@@ -113,7 +116,8 @@ jobs:
           cl /nologo /c /O2 /MD /EHsc /I. "$env:GITHUB_WORKSPACE\shims\bc7enc\bc7enc_shim.cpp"
           if ($LASTEXITCODE -ne 0) { throw "cl failed" }
 
-          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\dist\lib" | Out-Null
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\dist\lib", "$env:GITHUB_WORKSPACE\dist\include" | Out-Null
+          Copy-Item bc7e_ispc.h "$env:GITHUB_WORKSPACE\dist\include"
           link /nologo /DLL /OUT:"$env:GITHUB_WORKSPACE\dist\lib\bc7enc.dll" `
             /IMPLIB:"$env:GITHUB_WORKSPACE\dist\lib\bc7enc.lib" `
             bc7enc_shim.obj bc7e_ispc.obj bc7e_ispc_sse2.obj bc7e_ispc_avx.obj bc7e_ispc_avx2.obj
