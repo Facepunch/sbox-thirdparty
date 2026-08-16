@@ -90,6 +90,7 @@ jobs:
           mkdir -p build && cd build
           ../src/configure \
             --target=x86_64-win64-vs17 \
+            --enable-static-msvcrt \
             --enable-static --disable-shared \
             --disable-examples --disable-tools \
             --disable-docs --disable-unit-tests \

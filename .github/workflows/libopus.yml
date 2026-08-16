@@ -77,6 +77,7 @@ jobs:
           cmake -S src -B src\build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
             -DBUILD_SHARED_LIBS=OFF `
             -DOPUS_BUILD_PROGRAMS=OFF `
             -DOPUS_BUILD_TESTING=OFF
