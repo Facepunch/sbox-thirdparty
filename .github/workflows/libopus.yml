@@ -77,7 +77,9 @@ jobs:
           cmake -S src -B src\build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
-            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            # opus overwrites CMAKE_MSVC_RUNTIME_LIBRARY from its own option, which
+            # defaults to the DLL runtime, so setting the variable alone does nothing.
+            -DOPUS_STATIC_RUNTIME=ON `
             -DCMAKE_POLICY_DEFAULT_CMP0091=NEW `
             -DBUILD_SHARED_LIBS=OFF `
             -DOPUS_BUILD_PROGRAMS=OFF `
