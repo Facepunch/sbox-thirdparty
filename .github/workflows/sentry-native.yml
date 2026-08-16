@@ -1,0 +1,101 @@
+name: Build sentry-native
+
+# One build produces everything sbox ships for crash reporting: sentry.h, sentry.lib,
+# sentry.dll, crashpad_handler.exe and crashpad_wer.dll. They must stay revision locked -
+# sentry.dll embeds the Crashpad client, spawns the handler and hands the WER module to
+# WerFault, and those three talk over Crashpad's internal IPC. Building Crashpad separately
+# would risk a crash pipeline that only fails when someone actually crashes.
+#
+# Flags mirror src/sentry/build_win64.bat in sbox. CMAKE_SYSTEM_VERSION=6.2 is deliberate
+# there to keep the Windows 8 floor; RUNTIMESTATIC matches Source 2's /MT.
+#
+# win64 only: sbox excludes minidump.cpp from the Linux build, so there is no Sentry or
+# Crashpad on other platforms.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'sentry-native tag (e.g. 0.11.3)'
+        required: true
+        default: '0.11.3'
+  push:
+    tags: ['sentry-native-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#sentry-native-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=sentry-native-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    runs-on: windows-latest
+    name: win64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+
+      # Recursive: the Crashpad backend is a submodule (getsentry's fork, which carries the
+      # CMake support upstream Crashpad lacks).
+      - name: Clone sentry-native ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --recurse-submodules --shallow-submodules --branch ${{ needs.setup.outputs.lib_version }} https://github.com/getsentry/sentry-native src
+
+      - name: Build
+        shell: pwsh
+        working-directory: src
+        run: |
+          cmake -B build `
+            -DSENTRY_BUILD_SHARED_LIBS=ON `
+            -DSENTRY_BACKEND=crashpad `
+            "-DCMAKE_SYSTEM_VERSION=6.2" `
+            -DSENTRY_BUILD_RUNTIMESTATIC=ON
+          cmake --build build --parallel --config Release
+          cmake --install build --prefix "$env:GITHUB_WORKSPACE/dist" --config Release
+
+      # Packaged by hand rather than through collect-package-upload: that action globs only
+      # *.lib, *.a and *.dll, so it would silently drop crashpad_handler.exe.
+      - name: Stage dist
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out\include, out\lib, out\bin | Out-Null
+
+          Get-ChildItem dist -Recurse -Filter sentry.h | Select-Object -First 1 |
+            Copy-Item -Destination out\include\
+          Get-ChildItem dist -Recurse -Include *.lib | Copy-Item -Destination out\lib\
+          Get-ChildItem dist -Recurse -Include *.dll,*.exe | Copy-Item -Destination out\bin\
+
+          foreach ( $required in @('include\sentry.h', 'lib\sentry.lib', 'bin\sentry.dll',
+                                   'bin\crashpad_handler.exe', 'bin\crashpad_wer.dll') )
+          {
+            if ( -not ( Test-Path "out\$required" ) ) { throw "missing $required from the staged output" }
+          }
+
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path out\* -DestinationPath "sentry-native-${{ needs.setup.outputs.lib_version }}-win64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sentry-native-win64
+          path: sentry-native-${{ needs.setup.outputs.lib_version }}-win64.zip
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "sentry-native ${{ needs.setup.outputs.lib_version }}"

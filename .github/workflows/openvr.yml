@@ -1,0 +1,121 @@
+name: Build openvr
+
+# sbox consumes openvr purely as a DLL: game/bin/win64/openvr_api.dll is loaded at runtime,
+# no native module links it (nothing in src/**/*.build.cs references openvr_api, and the
+# import lib sitting in src/lib/public/win64/vc14 is a leftover), and the headers are not
+# vendored. win64 is the only platform sbox ships it on - the other three are built because
+# nothing blocks them, not because anything consumes them yet.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'openvr tag (e.g. v2.15.6)'
+        required: true
+        default: 'v2.15.6'
+  push:
+    tags: ['openvr-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#openvr-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=openvr-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Install cmake + ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build
+
+      - name: Install ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Clone openvr ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/ValveSoftware/openvr src
+
+      # The 64-bit Windows build names the target openvr_api64, but sbox loads openvr_api.dll,
+      # the name Valve ships. Renaming the built files afterwards would leave the import
+      # library pointing at openvr_api64.dll, so the target name has to change before
+      # configure. Fail loudly if a version bump moves that line.
+      - name: Name the Windows target openvr_api
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $file = "src\src\CMakeLists.txt"
+          $old = Get-Content -Raw $file
+          $new = $old -replace '"openvr_api64"', '"openvr_api"'
+          if ($new -eq $old) { throw "openvr_api64 target name not found in $file" }
+          Set-Content -Path $file -Value $new -NoNewline
+
+      # BUILD_SHARED is openvr's own option, not BUILD_SHARED_LIBS, and defaults to a static
+      # build. BUILD_UNIVERSAL defaults ON and pins CMAKE_OSX_ARCHITECTURES to "i386;x86_64",
+      # which no current Xcode can build - and would be the wrong arch for osxarm64 anyway.
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+            -DBUILD_SHARED=ON \
+            -DBUILD_FRAMEWORK=OFF \
+            -DBUILD_UNIVERSAL=OFF
+          cmake --build src/build --parallel
+          cmake --install src/build
+
+      # /MD: openvr is consumed as openvr_api.dll and owns its own CRT. CMAKE_MSVC_RUNTIME_LIBRARY
+      # is only honoured under CMP0091 NEW, which openvr's cmake_minimum_required(3.12) leaves OLD.
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S src -B src\build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL `
+            -DCMAKE_POLICY_DEFAULT_CMP0091=NEW `
+            -DBUILD_SHARED=ON
+          cmake --build src\build --parallel
+          cmake --install src\build
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: openvr
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "openvr ${{ needs.setup.outputs.lib_version }}"
