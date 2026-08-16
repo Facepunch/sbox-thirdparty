@@ -153,7 +153,8 @@ jobs:
             echo "save"; echo "end"; } | ar -M
           rm -f *.a
           mv "$merged" libembree3.a
-          nm -C libembree3.a | grep -q "TaskScheduler::threadID" || { echo "merged lib is missing TaskScheduler"; exit 1; }
+          # --defined-only, or an undefined reference to the symbol satisfies the check.
+          nm -C --defined-only libembree3.a | grep -q "TaskScheduler::threadID" || { echo "merged lib is missing TaskScheduler"; exit 1; }
 
       # embree's install drops the MSVC redistributables next to its libraries and the
       # packaging step globs every dll, so they end up in the archive. We ship our own
