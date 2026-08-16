@@ -121,8 +121,85 @@ jobs:
           name: qt5-win64
           path: qt5-${{ needs.setup.outputs.lib_version }}-win64.zip
 
+  build-linux:
+    needs: setup
+    runs-on: ubuntu-24.04
+    name: linuxsteamrt64
+    timeout-minutes: 300
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Qt needs the X11/xcb/fontconfig development headers to build the platform plugin.
+      # Without them configure silently drops xcb and the result cannot open a window.
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential libgl1-mesa-dev libfontconfig1-dev             libfreetype-dev libx11-dev libx11-xcb-dev libxext-dev libxfixes-dev             libxi-dev libxrender-dev libxcb1-dev libxcb-glx0-dev libxcb-keysyms1-dev             libxcb-image0-dev libxcb-shm0-dev libxcb-icccm4-dev libxcb-sync-dev             libxcb-xfixes0-dev libxcb-shape0-dev libxcb-randr0-dev             libxcb-render-util0-dev libxcb-util-dev libxcb-xinerama0-dev             libxcb-xkb-dev libxkbcommon-dev libxkbcommon-x11-dev libdbus-1-dev
+
+      - name: Clone Facepunch/qt ${{ needs.setup.outputs.lib_version }}
+        uses: actions/checkout@v4
+        with:
+          repository: Facepunch/qt
+          ref: ${{ needs.setup.outputs.lib_version }}
+          path: qt
+          lfs: true
+          submodules: recursive
+          fetch-depth: 1
+
+      # Mirrors valve/fp_config.bat, which is Windows only - same module skips and the
+      # same -no-opengl/-no-openssl/-release choices, driven through the Unix configure.
+      - name: Configure
+        working-directory: qt/valve
+        run: |
+          chmod +x configure
+          ./configure             -prefix "$PWD/build_linux64"             -opensource -confirm-license             -release -force-debug-info             -nomake examples -nomake tests -nomake tools             -no-opengl -no-openssl             -skip 3d -skip activeqt -skip androidextras -skip charts             -skip connectivity -skip datavis3d -skip declarative -skip doc             -skip gamepad -skip graphicaleffects -skip location -skip lottie             -skip macextras -skip multimedia -skip networkauth -skip purchasing             -skip quick3d -skip quickcontrols -skip quickcontrols2             -skip quicktimeline -skip remoteobjects -skip script -skip scxml             -skip sensors -skip serialbus -skip serialport -skip speech             -skip svg -skip translations -skip virtualkeyboard -skip wayland             -skip webchannel -skip webengine -skip webglplugin -skip websockets             -skip webview -skip x11extras -skip xmlpatterns
+
+      - name: Build
+        working-directory: qt/valve
+        run: make -j"$(nproc)"
+
+      - name: Install
+        working-directory: qt/valve
+        run: make install
+
+      - name: Stage dist
+        working-directory: qt/valve
+        run: |
+          build="$PWD/build_linux64"
+          [ -d "$build" ] || { echo "Qt install prefix $build not found"; exit 1; }
+
+          out="$GITHUB_WORKSPACE/dist"
+          mkdir -p "$out/include" "$out/lib" "$out/bin" "$out/plugins"
+
+          for m in QtCore QtGui QtWidgets QtConcurrent QtNetwork QtUiTools; do
+            if [ -d "$build/include/$m" ]; then
+              cp -r "$build/include/$m" "$out/include/"
+              rm -rf "$out/include/$m"/5.15.2*
+            fi
+          done
+
+          cp -a "$build"/lib/libQt5*.so* "$out/lib/" 2>/dev/null || true
+          cp -a "$build"/lib/libQt5*.a "$out/lib/" 2>/dev/null || true
+          for tool in moc rcc uic; do
+            [ -f "$build/bin/$tool" ] && cp "$build/bin/$tool" "$out/bin/"
+          done
+          for p in platforms imageformats; do
+            [ -d "$build/plugins/$p" ] && cp -r "$build/plugins/$p" "$out/plugins/"
+          done
+
+          ls "$out/lib" | grep -q "libQt5Core" || { echo "libQt5Core missing from staged output"; exit 1; }
+
+      - name: Package
+        run: tar czf "qt5-${{ needs.setup.outputs.lib_version }}-linuxsteamrt64.tar.gz" -C dist .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qt5-linuxsteamrt64
+          path: qt5-${{ needs.setup.outputs.lib_version }}-linuxsteamrt64.tar.gz
+
   release:
-    needs: [setup, build]
+    needs: [setup, build, build-linux]
     uses: ./.github/workflows/_release.yml
     with:
       release_tag: ${{ needs.setup.outputs.release_tag }}
