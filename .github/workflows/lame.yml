@@ -100,7 +100,10 @@ jobs:
           # libtool passes this list to --version-script / -exported_symbols_list, so the
           # mpglib entries have to go with --disable-decoder. The lame_*_decode_only /
           # _decode_on_the_fly / ReplayGain_decode setters live in set_get.c and stay.
-          sed -i.bak -E '/^(lame_decode|hip_)/d' include/libmp3lame.sym
+          # lame_init_old is listed but never compiled. macOS treats every entry in
+          # -exported_symbols_list as a required undefine, so a stale name is a hard
+          # link error there even though the Linux version-script tolerates it.
+          sed -i.bak -E '/^(lame_decode|hip_|lame_init_old)/d' include/libmp3lame.sym
           # config.guess here is from 2015 and predates Apple Silicon: uname -p reports
           # "arm", so it would guess a 32-bit arm-apple-darwin build. Name the triple.
           EXTRA=""
@@ -139,7 +142,7 @@ jobs:
           Copy-Item configMS.h config.h
           # lame.h carries no __declspec(dllexport); the exports come from include/lame.def.
           # Drop its decoder entries, which have no definition in a build without mpglib.
-          (Get-Content include\lame.def) -notmatch '^(lame_decode|hip_)' |
+          (Get-Content include\lame.def) -notmatch '^(lame_decode|hip_|lame_init_old)' |
             Set-Content include\lame_nodecoder.def
           cl /nologo /O2 /MD /DHAVE_CONFIG_H /D_CRT_SECURE_NO_WARNINGS /I. /Iinclude /Ilibmp3lame /LD `
             "libmp3lame\*.c" "libmp3lame\vector\xmm_quantize_sub.c" `

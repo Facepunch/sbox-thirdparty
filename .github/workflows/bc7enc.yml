@@ -17,7 +17,7 @@ on:
       lib_version:
         description: 'bc7e branch or commit SHA'
         required: true
-        default: 'master'
+        default: 'main'
       ispc_version:
         description: 'ISPC compiler release to build the kernel with'
         required: true
