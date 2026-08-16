@@ -54,8 +54,10 @@ jobs:
 
       - uses: ./.github/actions/setup-msvc
 
+      # core.autocrlf=false keeps upstream's LF bytes on disk. With the runner default the
+      # checkout gets CRLF and the patch below fails to find its context lines.
       - name: Clone FidelityFX-SDK ${{ needs.setup.outputs.lib_version }}
-        run: git clone --depth 1 --recurse-submodules --shallow-submodules --branch ${{ needs.setup.outputs.lib_version }} https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK src
+        run: git -c core.autocrlf=false clone --depth 1 --recurse-submodules --shallow-submodules --branch ${{ needs.setup.outputs.lib_version }} https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK src
 
       # sbox never links vulkan-1; it loads Vulkan through volk at runtime, so the backend
       # has to be built against volk's function pointers rather than the import library.
