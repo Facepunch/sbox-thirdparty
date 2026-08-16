@@ -1,0 +1,144 @@
+name: Build bc7enc
+
+# BinomialLLC/bc7e, wrapped so it exports the three entry points sbox resolves from
+# bc7enc.dll. The original wrapper's source is not in the sbox repo, so it is reconstructed
+# here in shims/bc7enc - see that file for the contract.
+#
+# bc7e is an ISPC kernel, which is why this is built here rather than vendored: compiling it
+# in tree would put an ISPC toolchain on every developer machine. The upstream repo bundles
+# a 39 MB ispc.exe for that reason; we fetch a pinned release instead.
+#
+# win64 + linuxsteamrt64: sbox only compiles the loader on Windows today
+# (src/bitmap/bitmap.build.cs excludes it on Linux) but the Linux binary lets that change.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'bc7e branch or commit SHA'
+        required: true
+        default: 'master'
+      ispc_version:
+        description: 'ISPC compiler release to build the kernel with'
+        required: true
+        default: 'v1.25.3'
+  push:
+    tags: ['bc7enc-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+      ispc_version: ${{ steps.ver.outputs.ispc_version }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#bc7enc-}"
+            ISPC="v1.25.3"
+          else
+            V="${{ inputs.lib_version }}"
+            ISPC="${{ inputs.ispc_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "ispc_version=$ISPC" >> $GITHUB_OUTPUT
+          echo "release_tag=bc7enc-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, platform: win64 }
+          - { os: ubuntu-24.04,   platform: linuxsteamrt64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Clone bc7e ${{ needs.setup.outputs.lib_version }}
+        run: |
+          git clone https://github.com/BinomialLLC/bc7e src
+          git -C src checkout ${{ needs.setup.outputs.lib_version }}
+
+      - name: Install ISPC ${{ needs.setup.outputs.ispc_version }} (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          V="${{ needs.setup.outputs.ispc_version }}"
+          curl -fsSL -o ispc.tar.gz "https://github.com/ispc/ispc/releases/download/$V/ispc-$V-linux.tar.gz"
+          mkdir -p ispc && tar xzf ispc.tar.gz -C ispc --strip-components=1
+          echo "$GITHUB_WORKSPACE/ispc/bin" >> $GITHUB_PATH
+
+      - name: Install ISPC ${{ needs.setup.outputs.ispc_version }} (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $v = "${{ needs.setup.outputs.ispc_version }}"
+          Invoke-WebRequest -Uri "https://github.com/ispc/ispc/releases/download/$v/ispc-$v-windows.zip" -OutFile ispc.zip
+          Expand-Archive ispc.zip -DestinationPath ispc_dl
+          $bin = (Get-ChildItem ispc_dl -Recurse -Filter ispc.exe | Select-Object -First 1).DirectoryName
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+
+      # sse2,avx,avx2 mirrors what upstream's own build scripts use. The generated header
+      # declares the ispc:: namespace the shim includes.
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd src
+          ispc -O2 --arch=x86-64 --target=sse2,avx,avx2 --opt=fast-math --pic \
+            -o bc7e_ispc.o -h bc7e_ispc.h bc7e.ispc
+          g++ -O2 -fPIC -fvisibility=hidden -I. -c "$GITHUB_WORKSPACE/shims/bc7enc/bc7enc_shim.cpp" -o bc7enc_shim.o
+          mkdir -p "$GITHUB_WORKSPACE/dist/lib"
+          g++ -shared -o "$GITHUB_WORKSPACE/dist/lib/libbc7enc.so" \
+            bc7enc_shim.o bc7e_ispc.o bc7e_ispc_sse2.o bc7e_ispc_avx.o bc7e_ispc_avx2.o
+          nm -D --defined-only "$GITHUB_WORKSPACE/dist/lib/libbc7enc.so" | grep -q InitalizeModule
+
+      # /MD: this ships as a DLL loaded at runtime, so it owns its own CRT.
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: src
+        run: |
+          ispc -O2 --arch=x86-64 --target=sse2,avx,avx2 --opt=fast-math `
+            -o bc7e_ispc.obj -h bc7e_ispc.h bc7e.ispc
+          if ($LASTEXITCODE -ne 0) { throw "ispc failed" }
+
+          cl /nologo /c /O2 /MD /EHsc /I. "$env:GITHUB_WORKSPACE\shims\bc7enc\bc7enc_shim.cpp"
+          if ($LASTEXITCODE -ne 0) { throw "cl failed" }
+
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\dist\lib" | Out-Null
+          link /nologo /DLL /OUT:"$env:GITHUB_WORKSPACE\dist\lib\bc7enc.dll" `
+            /IMPLIB:"$env:GITHUB_WORKSPACE\dist\lib\bc7enc.lib" `
+            bc7enc_shim.obj bc7e_ispc.obj bc7e_ispc_sse2.obj bc7e_ispc_avx.obj bc7e_ispc_avx2.obj
+          if ($LASTEXITCODE -ne 0) { throw "link failed" }
+
+          # The loader fails fatally if any entry point is missing, so prove they are there.
+          $dumpbin = (Get-Command dumpbin -ErrorAction SilentlyContinue)
+          if ( $dumpbin )
+          {
+            $exports = & dumpbin /exports "$env:GITHUB_WORKSPACE\dist\lib\bc7enc.dll" | Out-String
+            foreach ( $sym in @('InitalizeModule', 'GetProfile_BC7', 'CompressBlocks') )
+            {
+              if ( $exports -notmatch $sym ) { throw "bc7enc.dll is missing the $sym export" }
+            }
+          }
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: bc7enc
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "bc7enc (bc7e ${{ needs.setup.outputs.lib_version }})"

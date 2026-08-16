@@ -1,0 +1,166 @@
+name: Build lame
+
+# LAME MP3 encoder. This builds libmp3lame, the portable LAME library, and NOT the
+# lame_enc.dll that sbox ships today.
+#
+# src/utils/resourcecompiler/mp3_compress.cpp currently resolves nine be* entry points
+# (beInitStream, beEncodeChunk, beEncodeChunkFloatS16NI, beDeinitStream, beCloseStream,
+# beVersion, beWriteVBRHeader, beFlushNoGap, beWriteInfoTag) out of
+# game/bin/win64/lame_enc.dll. That is LAME's legacy Blade interface, which lives only in
+# Dll/BladeMP3EncDLL.c and is Win32-only by construction. The consumer has to be ported to
+# the standard API (lame_init / lame_set_* / lame_encode_buffer* / lame_encode_flush /
+# lame_close) before it can use this package - until then this release does not drop in
+# over the existing DLL.
+#
+# No decoder is built. LAME's decoder is mpglib, which is GPL rather than LGPL (sbox's own
+# notice in game/thirdpartylegalnotices/licenses/lame calls this out), and sbox decodes MP3
+# through thirdparty/dr_libs/dr_mp3.h anyway. The decoder entries therefore also have to be
+# removed from the export lists, or the link fails on symbols that were never compiled.
+#
+# Shared rather than static, on every platform: LGPL-2.1 relinking is satisfied by keeping
+# LAME a separate binary, which is how sbox ships it today (dependency_index.json records
+# LAME as "Linkage": "dynamic").
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'LAME version (e.g. 3.100)'
+        required: true
+        default: '3.100'
+  push:
+    tags: ['lame-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      lib_series: ${{ steps.ver.outputs.lib_series }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#lame-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          # SourceForge files live under lame/<major.minor>/lame-<version>.tar.gz,
+          # so 3.100 sits in lame/3.100/ and 3.99.5 would sit in lame/3.99/.
+          SERIES="$(echo "$V" | cut -d. -f1,2)"
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "lib_series=$SERIES" >> $GITHUB_OUTPUT
+          echo "release_tag=lame-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Download lame ${{ needs.setup.outputs.lib_version }} (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          V="${{ needs.setup.outputs.lib_version }}"
+          curl -fsSL --retry 3 -o lame.tar.gz \
+            "https://downloads.sourceforge.net/project/lame/lame/${{ needs.setup.outputs.lib_series }}/lame-$V.tar.gz"
+          mkdir -p src && tar xzf lame.tar.gz -C src --strip-components=1
+
+      # curl.exe and tar.exe are both shipped with Windows. curl.exe must be spelled out:
+      # bare "curl" is a PowerShell alias for Invoke-WebRequest, which takes different flags.
+      - name: Download lame ${{ needs.setup.outputs.lib_version }} (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $v = "${{ needs.setup.outputs.lib_version }}"
+          $series = "${{ needs.setup.outputs.lib_series }}"
+          curl.exe -fsSL --retry 3 -o lame.tar.gz "https://downloads.sourceforge.net/project/lame/lame/$series/lame-$v.tar.gz"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force src | Out-Null
+          tar -xzf lame.tar.gz -C src --strip-components=1
+
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd src
+          # libtool passes this list to --version-script / -exported_symbols_list, so the
+          # mpglib entries have to go with --disable-decoder. The lame_*_decode_only /
+          # _decode_on_the_fly / ReplayGain_decode setters live in set_get.c and stay.
+          sed -i.bak -E '/^(lame_decode|hip_)/d' include/libmp3lame.sym
+          # config.guess here is from 2015 and predates Apple Silicon: uname -p reports
+          # "arm", so it would guess a 32-bit arm-apple-darwin build. Name the triple.
+          EXTRA=""
+          if [ "$RUNNER_OS" = "macOS" ]; then EXTRA="--build=aarch64-apple-darwin"; fi
+          ./configure \
+            --prefix="$GITHUB_WORKSPACE/dist" \
+            --enable-shared --disable-static \
+            --disable-frontend --disable-decoder \
+            --with-pic $EXTRA
+          make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+          make install
+
+      # libtool bakes the absolute build-machine path in as the dylib's install name, which
+      # resolves nowhere else. Rewrite it to @rpath so the loader can find it next to the exe.
+      - name: Fix dylib install name (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          for f in "$GITHUB_WORKSPACE"/dist/lib/libmp3lame*.dylib; do
+            [ -L "$f" ] && continue
+            install_name_tool -id "@rpath/$(basename "$f")" "$f"
+          done
+
+      # Windows drives cl.exe directly. Makefile.MSVC is VC6-era - it defaults to
+      # /machine:I386, wants nasm, and only reaches x64 through an undocumented
+      # MSVCVER=Win64 path - and there is no upstream CMake, so a CMake wrapper would be
+      # more code than the compile it replaces: the whole library is libmp3lame/*.c plus
+      # vector/xmm_quantize_sub.c. That vector file is not optional on x64, because
+      # configMS.h auto-defines HAVE_XMMINTRIN_H for _M_X64 and quantize.c then calls
+      # init_xrpow_core_sse out of it. /MD because a DLL owns its own CRT (see README), and
+      # no /GL, so the import lib is not tied to one MSVC minor version.
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-Location src
+          Copy-Item configMS.h config.h
+          # lame.h carries no __declspec(dllexport); the exports come from include/lame.def.
+          # Drop its decoder entries, which have no definition in a build without mpglib.
+          (Get-Content include\lame.def) -notmatch '^(lame_decode|hip_)' |
+            Set-Content include\lame_nodecoder.def
+          cl /nologo /O2 /MD /DHAVE_CONFIG_H /D_CRT_SECURE_NO_WARNINGS /I. /Iinclude /Ilibmp3lame /LD `
+            "libmp3lame\*.c" "libmp3lame\vector\xmm_quantize_sub.c" `
+            "/Fe:libmp3lame.dll" `
+            /link "/DEF:include\lame_nodecoder.def"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Match the layout autotools installs on Unix: include/lame/lame.h.
+          $out = "$env:GITHUB_WORKSPACE\dist"
+          New-Item -ItemType Directory -Force "$out\include\lame", "$out\lib" | Out-Null
+          Copy-Item include\lame.h "$out\include\lame\"
+          Copy-Item libmp3lame.dll, libmp3lame.lib "$out\lib\"
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: lame
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "LAME ${{ needs.setup.outputs.lib_version }}"

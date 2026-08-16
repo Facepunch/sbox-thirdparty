@@ -1,0 +1,162 @@
+name: Build Compressonator
+
+# Builds the Compressonator SDK static libs (CMP_Core + CMP_Compressonator), which export the
+# CMP_* API - CMP_ConvertTexture / CMP_CalculateBufferSize and the BC6H/BC7 block encoders.
+#
+# Only win64 and linuxsteamrt64 are built. Upstream compiles CMP_Core_SSE/AVX/AVX512
+# unconditionally with -march=nehalem/haswell/knl on Unix and /arch:AVX2 on Windows, with no
+# architecture guard, so an aarch64 toolchain rejects the configure outright. Source 2 also
+# only compiles its texture-compression loaders on Windows (src/bitmap/bitmap.build.cs excludes
+# ati_compress_loader.cpp and ispc_compressor_loader.cpp on Linux).
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'Compressonator tag (e.g. V4.5.52)'
+        required: true
+        default: 'V4.5.52'
+  push:
+    tags: ['compressonator-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#compressonator-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=compressonator-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, platform: win64 }
+          - { os: ubuntu-24.04,   platform: linuxsteamrt64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Install cmake + ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build
+
+      - name: Clone Compressonator ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/GPUOpen-Tools/compressonator src
+
+      # OPTION_BUILD_INTERNAL_CMP_TEST defaults to ON and adds compressonator_internal/, a tree
+      # that does not exist in the public repo, so leaving it on breaks the configure.
+      # OPTION_BUILD_CMP_SDK also drags in the imageio and gpu_decode subdirectories; they are
+      # configured but never compiled because only the two library targets below are built.
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DOPTION_BUILD_CMP_SDK=ON \
+            -DOPTION_ENABLE_ALL_APPS=OFF \
+            -DOPTION_BUILD_APPS_CMP_CLI=OFF \
+            -DOPTION_BUILD_APPS_CMP_GUI=OFF \
+            -DOPTION_BUILD_APPS_CMP_UNITTESTS=OFF \
+            -DOPTION_BUILD_APPS_CMP_EXAMPLES=OFF \
+            -DOPTION_BUILD_INTERNAL_CMP_TEST=OFF \
+            -DOPTION_BUILD_GUI=OFF \
+            -DOPTION_BUILD_KTX2=OFF \
+            -DOPTION_BUILD_EXR=OFF \
+            -DOPTION_BUILD_ASTC=OFF \
+            -DOPTION_BUILD_DRACO=OFF \
+            -DOPTION_BUILD_BROTLIG=OFF \
+            -DOPTION_CMP_QT=OFF \
+            -DOPTION_CMP_OPENCV=OFF \
+            -DOPTION_CMP_OPENGL=OFF \
+            -DOPTION_CMP_VULKAN=OFF \
+            -DOPTION_CMP_DIRECTX=OFF
+          cmake --build src/build --parallel --target CMP_Core CMP_Compressonator
+
+      # The policy value must be quoted: unquoted, PowerShell hands cmake a truncated "3"
+      # and the configure fails with 'Invalid CMAKE_POLICY_VERSION_MINIMUM value "3"'.
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S src -B src\build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DCMAKE_POLICY_DEFAULT_CMP0091=NEW `
+            -DOPTION_BUILD_CMP_SDK=ON `
+            -DOPTION_ENABLE_ALL_APPS=OFF `
+            -DOPTION_BUILD_APPS_CMP_CLI=OFF `
+            -DOPTION_BUILD_APPS_CMP_GUI=OFF `
+            -DOPTION_BUILD_APPS_CMP_UNITTESTS=OFF `
+            -DOPTION_BUILD_APPS_CMP_EXAMPLES=OFF `
+            -DOPTION_BUILD_INTERNAL_CMP_TEST=OFF `
+            -DOPTION_BUILD_GUI=OFF `
+            -DOPTION_BUILD_KTX2=OFF `
+            -DOPTION_BUILD_EXR=OFF `
+            -DOPTION_BUILD_ASTC=OFF `
+            -DOPTION_BUILD_DRACO=OFF `
+            -DOPTION_BUILD_BROTLIG=OFF `
+            -DOPTION_CMP_QT=OFF `
+            -DOPTION_CMP_OPENCV=OFF `
+            -DOPTION_CMP_OPENGL=OFF `
+            -DOPTION_CMP_VULKAN=OFF `
+            -DOPTION_CMP_DIRECTX=OFF
+          cmake --build src\build --parallel --target CMP_Core CMP_Compressonator
+
+      # Compressonator declares no install() rules at all, so stage the dist/ layout the collect
+      # action expects by hand. cmp_core exports both source/ and shaders/ as public include
+      # directories, so both are flattened into include/ the way consumers see them.
+      - name: Stage dist (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist/include dist/lib
+          cp src/cmp_compressonatorlib/compressonator.h dist/include/
+          cp src/cmp_compressonatorlib/common.h dist/include/
+          cp src/cmp_compressonatorlib/version.h dist/include/
+          cp src/cmp_core/source/*.h dist/include/
+          cp src/cmp_core/shaders/*.h dist/include/
+          find src/build -name "*.a" -exec cp {} dist/lib/ \;
+
+      - name: Stage dist (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist\include, dist\lib | Out-Null
+          Copy-Item src\cmp_compressonatorlib\compressonator.h dist\include\
+          Copy-Item src\cmp_compressonatorlib\common.h dist\include\
+          Copy-Item src\cmp_compressonatorlib\version.h dist\include\
+          Copy-Item src\cmp_core\source\*.h dist\include\
+          Copy-Item src\cmp_core\shaders\*.h dist\include\
+          Get-ChildItem src\build -Recurse -Filter *.lib | Copy-Item -Destination dist\lib\
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: compressonator
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "Compressonator ${{ needs.setup.outputs.lib_version }}"
