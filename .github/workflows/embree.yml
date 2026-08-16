@@ -49,9 +49,10 @@ jobs:
           - { os: ubuntu-24.04,   platform: linuxsteamrt64 }
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.platform }}
-    # win64 has taken over two hours when the ISA trim silently failed to apply. Fail
-    # rather than sit on a runner for the default six hours.
-    timeout-minutes: 90
+    # win64 legitimately takes around two hours: MSVC compiles the whole kernel set once
+    # per ISA on a 4 core runner. Capped well above that so a real hang still fails, but
+    # a normal build is never cut off.
+    timeout-minutes: 240
 
     steps:
       - uses: actions/checkout@v4
