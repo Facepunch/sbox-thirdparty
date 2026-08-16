@@ -103,14 +103,20 @@ jobs:
           meson compile -C src\build
           meson install -C src\build
 
-          # dav1d declares a plain library('dav1d'), so the output name comes from the
-          # compiler meson picked. MSVC yields dav1d.lib, which is what sbox links; a
-          # GNU-style libdav1d.a means meson resolved a different compiler, so fail here
-          # rather than publish an archive nothing can find.
+          # Meson names this GNU-style even though it built with MSVC - its own log says
+          # "C compiler for the host machine: cl (msvc ...)" and it still installs
+          # libdav1d.a. dav1d declares a plain library('dav1d') with no name_prefix or
+          # name_suffix, and those are project-level arguments, so there is no meson option
+          # to correct the name from out here. The archive is a normal MSVC one: byte for
+          # byte the same as the copy sbox vendored, apart from ar member timestamps.
+          # sbox links dav1d.lib, so rename it.
+          $produced = Get-ChildItem "$env:GITHUB_WORKSPACE\dist" -Recurse -Filter libdav1d.a
+          if ( $produced ) { Move-Item $produced.FullName ( Join-Path $produced.DirectoryName "dav1d.lib" ) -Force }
+
           if ( -not ( Get-ChildItem "$env:GITHUB_WORKSPACE\dist" -Recurse -Filter dav1d.lib ) )
           {
             Get-ChildItem "$env:GITHUB_WORKSPACE\dist" -Recurse -Include *.a,*.lib | ForEach-Object { Write-Host "produced: $($_.Name)" }
-            throw "meson did not produce dav1d.lib - check which compiler it detected above"
+            throw "no dav1d.lib in the install tree - see the names produced above"
           }
 
       - uses: ./.github/actions/collect-package-upload
