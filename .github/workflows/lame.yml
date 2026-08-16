@@ -1,25 +1,14 @@
 name: Build lame
 
-# LAME MP3 encoder. This builds libmp3lame, the portable LAME library, and NOT the
-# lame_enc.dll that sbox ships today.
+# Builds libmp3lame, the portable LAME library. This replaces the legacy Blade-interface
+# lame_enc.dll; consumers use the standard lame_* API.
 #
-# src/utils/resourcecompiler/mp3_compress.cpp currently resolves nine be* entry points
-# (beInitStream, beEncodeChunk, beEncodeChunkFloatS16NI, beDeinitStream, beCloseStream,
-# beVersion, beWriteVBRHeader, beFlushNoGap, beWriteInfoTag) out of
-# game/bin/win64/lame_enc.dll. That is LAME's legacy Blade interface, which lives only in
-# Dll/BladeMP3EncDLL.c and is Win32-only by construction. The consumer has to be ported to
-# the standard API (lame_init / lame_set_* / lame_encode_buffer* / lame_encode_flush /
-# lame_close) before it can use this package - until then this release does not drop in
-# over the existing DLL.
+# No decoder: LAME's is mpglib, which is GPL rather than LGPL, and sbox decodes MP3 through
+# dr_mp3 anyway. Its entries have to come out of the export lists too, or the link fails on
+# symbols that were never compiled.
 #
-# No decoder is built. LAME's decoder is mpglib, which is GPL rather than LGPL (sbox's own
-# notice in game/thirdpartylegalnotices/licenses/lame calls this out), and sbox decodes MP3
-# through thirdparty/dr_libs/dr_mp3.h anyway. The decoder entries therefore also have to be
-# removed from the export lists, or the link fails on symbols that were never compiled.
-#
-# Shared rather than static, on every platform: LGPL-2.1 relinking is satisfied by keeping
-# LAME a separate binary, which is how sbox ships it today (dependency_index.json records
-# LAME as "Linkage": "dynamic").
+# Shared on every platform, so LGPL-2.1 relinking is satisfied by LAME staying a separate
+# binary.
 
 on:
   workflow_dispatch:

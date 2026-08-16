@@ -111,7 +111,7 @@ jobs:
           Write-Host "MSBuild: $msbuild"
           # vpx.vcxproj is at the root of the build directory
           # Disable WholeProgramOptimization (LTCG/GL) so the lib is not tied to a
-          # specific MSVC minor version — prevents C1047 on self-hosted CI runners.
+          # specific MSVC minor version - prevents C1047 on self-hosted CI runners.
           & $msbuild vpx.vcxproj /p:Configuration=Release /p:Platform=x64 /p:WholeProgramOptimization=false /m /v:m
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # lib output is at x64/Release/vpxmd.lib (or vpxmt.lib); rename to vpx.lib

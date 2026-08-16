@@ -3,10 +3,7 @@ name: Build embree
 # Settings follow src/thirdparty/embree/README_VALVE.txt: no ISPC, internal tasking
 # (so we don't drag in TBB) and no tutorials. Source 2 links the static embree3.
 #
-# NOTE: sbox currently vendors 3.6.1 (2019). That release predates GCC 13 / Clang 17 and
-# does not compile on current runners, so the default here is the last 3.x release. The
-# embree3 API is stable across 3.x, so this is a drop-in for our usage (point queries +
-# raytracing in lightinglib / mapdoclib).
+# Stay on 3.x. The API is stable across it, and 4 is a different one.
 
 on:
   workflow_dispatch:
@@ -35,10 +32,7 @@ jobs:
           echo "lib_version=$V" >> $GITHUB_OUTPUT
           echo "release_tag=embree-$V" >> $GITHUB_OUTPUT
 
-  # win64 + linuxsteamrt64 only. sbox ships embree for win32/win64/linuxsteamrt64 and
-  # nothing else, and 3.13.x cannot build on aarch64 with current compilers anyway - its
-  # vendored sse2neon.h/avx2neon.h fail with "cannot convert '__Int64x2_t' to '__m128i'"
-  # on GCC 13+. Adding arm would mean moving to embree 4, which is a different API.
+  # No aarch64: 3.13.x's vendored sse2neon.h/avx2neon.h do not compile on GCC 13+.
   build:
     needs: setup
     strategy:

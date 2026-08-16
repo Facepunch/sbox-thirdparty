@@ -1,18 +1,11 @@
 name: Build qt5
 
-# Builds Facepunch/qt - our patched Qt 5.15.2, itself based on Valve's build. This does
-# NOT build upstream Qt: the fork carries QDockWidget changes that the tools UI depends on
-# (see that repo's README), so upstream would produce a subtly different editor.
+# Builds Facepunch/qt, our patched Qt 5.15.2, and never upstream Qt: the fork carries
+# QDockWidget changes the tools UI depends on. It vendors jom and gnuwin32, so all we add is
+# MSVC, the checkout and the packaging.
 #
-# The fork is self-contained - it vendors jom and gnuwin32 - so all we add is MSVC, the
-# checkout and the packaging. Build steps mirror Facepunch/qt's own .github/workflows/ci.yml.
-#
-# win64 only: src/thirdparty/lgpl/qt5 is win64 only, and fp_config.bat configures for
-# win32-msvc with -prefix build_win64.
-#
-# This one does not use the shared collect-package-upload action. Qt needs its moc/rcc/uic
-# host tools and its platform/imageformats plugin trees preserved as a directory layout,
-# and that action flattens everything into lib/.
+# Packaged by hand rather than through collect-package-upload, which flattens everything
+# into lib/. Qt needs its moc/rcc/uic host tools and its plugin trees kept as directories.
 
 on:
   workflow_dispatch:

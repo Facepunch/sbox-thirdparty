@@ -1,20 +1,11 @@
 name: Build FidelityFX-FSR3
 
-# AMD FidelityFX SDK, Vulkan backend only - Source 2 links ffx_fsr3upscaler_x64.lib and
-# ffx_backend_vk_x64.lib from src/rendersystem/rendersystemvulkan.build.cs.
+# AMD FidelityFX SDK, Vulkan backend only - sbox links ffx_fsr3upscaler_x64.lib and
+# ffx_backend_vk_x64.lib. win64 only, since the SDK's shader compilation step targets the
+# Windows toolchain.
 #
-# win64 only: the vendored copy is win64 only and the SDK's shader compilation step
-# (FidelityFX_SC) targets the Windows toolchain.
-#
-# This is the least settled workflow in the repo - AMD drive their build through
-# BuildFidelityFXSDK.bat rather than a plain CMake configure, so expect the first run to
-# need adjusting once we see how their CMake lays out its output.
-#
-# VERSION WARNING: sbox vendors FSR 3.0.4 / FFX SDK 1.0.1, but AMD never tagged a v1.0.x
-# release - the earliest tag is v1.1.2. The default below is the newest 1.1.x, which
-# deliberately avoids the 2.x rewrite, but FSR 3.1 moved to the ffx-api model, so the libs
-# this produces may not match what rendersystemvulkan.build.cs links today. Confirm
-# against src/rendersystem before adopting the output.
+# Stay on 1.1.x. AMD never tagged the 1.0.x that sbox vendors, and FSR 3.1 moved to the
+# ffx-api model, so 2.x is a source change rather than a version bump.
 
 on:
   workflow_dispatch:

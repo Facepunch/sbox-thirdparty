@@ -102,7 +102,7 @@ jobs:
           cmake --install src/build
 
       # ── Windows ────────────────────────────────────────────────────────────
-      # Build static libcurl backed by Windows Schannel — no extra DLLs needed.
+      # Build static libcurl backed by Windows Schannel - no extra DLLs needed.
       # Consumers must also link Crypt32.lib (handled in the sbox VPC).
       - name: Build (Windows)
         if: runner.os == 'Windows'

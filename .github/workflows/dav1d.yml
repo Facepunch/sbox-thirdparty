@@ -94,7 +94,7 @@ jobs:
           CC: cl
           CXX: cl
         run: |
-          # Meson rejects GNU link.exe from Git\usr\bin — strip it from PATH first.
+          # Meson rejects GNU link.exe from Git\usr\bin - strip it from PATH first.
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notlike '*Git\usr\bin*' }) -join ';'
           # b_vscrt=mt matches Source 2's RuntimeLibrary=MultiThreaded. Without it meson
           # builds against the DLL CRT and every link warns LNK4286 about ucrt symbols
