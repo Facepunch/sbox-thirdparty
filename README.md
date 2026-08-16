@@ -35,7 +35,7 @@ Versions below are each workflow's default; what sbox actually consumes is pinne
 | [openxr-loader](https://github.com/KhronosGroup/OpenXR-SDK) | release-1.1.43 | OpenXR loader |
 | [qt5](https://github.com/Facepunch/qt) | master | Tools UI, our fork |
 
-`compressonator` also builds here but is not consumed by sbox yet.
+`compressonator` also builds here (win64, linux64) but is not consumed by sbox yet.
 
 Not built here: `fbx`, `nvidia`, `ovrlipsync` and `superluminal`. Vendor SDKs with no
 buildable source, so they stay vendored in sbox.
@@ -58,6 +58,7 @@ Most libraries build all four. The exceptions, and why:
 | `oidn` | win64 | Same, and 2.x reworks the device API `vrad3` uses. |
 | `fidelityfx-fsr3` | win64 | AMD's SDK and shader compiler are Windows-only. |
 | `sentry-native` | win64 | sbox only builds the crash handler on Windows. |
+| `qt5` | win64, linux64 | The editor only ships on these two. |
 
 ## Triggering a build
 
