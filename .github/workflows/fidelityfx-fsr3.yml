@@ -62,9 +62,16 @@ jobs:
       # Without this the resulting .lib pulls in vulkan-1 imports that sbox cannot resolve.
       # git apply fails loudly if a version bump moves the code out from under the patch,
       # which is the point - better a red build than a silently unpatched backend.
+      # bash, not the pwsh default: PowerShell hands the literal *.patch to git instead of
+      # expanding it. GitHub runs bash with -e, so a failed apply still fails the build.
       - name: Apply patches
+        shell: bash
         working-directory: src
-        run: git apply --verbose ../patches/fidelityfx-fsr3/*.patch
+        run: |
+          for patch in ../patches/fidelityfx-fsr3/*.patch; do
+            echo "Applying $patch"
+            git apply --verbose "$patch"
+          done
 
       # volk.h is pinned to VOLK_HEADER_VERSION 304, matching src/thirdparty/vulkan/volk
       # in sbox, so the backend compiles against the same declarations it links against.
