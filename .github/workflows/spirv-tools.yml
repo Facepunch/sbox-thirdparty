@@ -89,13 +89,10 @@ jobs:
 
       # Static CRT (/MT) to match Source 2's RuntimeLibrary=MultiThreaded.
       #
-      # _USE_STD_VECTOR_ALGORITHMS=0 stops the MSVC STL emitting calls to its vectorised
-      # algorithm helpers (__std_max_element_4u and friends). Those live in the STL's own
-      # library and only exist from the toolset that introduced them, so a lib built on the
-      # runner's MSVC fails to link on a developer machine one version behind:
-      #   SPIRV-Tools.lib(disassemble.cpp.obj): unresolved external __std_max_element_4u
-      # MSVC libraries are forward compatible, not backward, so the artifact must avoid the
-      # newest symbols rather than expect everyone to upgrade in lockstep.
+      # Built with the runner's current MSVC. Its STL emits calls to vectorised algorithm
+      # helpers (__std_max_element_4u and friends) that only exist from the toolset which
+      # introduced them, so linking these artifacts needs a local MSVC at least as new as
+      # the runner's - currently 14.51 / VS 2026.
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -104,7 +101,6 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
-            "-DCMAKE_CXX_FLAGS=/D_USE_STD_VECTOR_ALGORITHMS=0" `
             -DBUILD_SHARED_LIBS=OFF `
             -DENABLE_OPT=ON `
             -DENABLE_GLSLANG_BINARIES=OFF `
@@ -115,12 +111,10 @@ jobs:
           cmake --build src\build --parallel
           cmake --install src\build
 
-      # glslang installs its SPIR-V headers under include/glslang/SPIRV. Source 2 includes
-      # them as <SPIRV/...>, so mirror them to the top level and keep both layouts working.
-      # Source 2 includes <SPIRV/doc.h> and <SPIRV/SPVRemapper.h>. glslang installs only
-      # its public headers, so doc.h is missing from the install tree - take the whole
-      # SPIRV directory from the source checkout instead, then let the installed copies
-      # win where both exist.
+      # Source 2 includes <SPIRV/doc.h> and <SPIRV/SPVRemapper.h>. glslang installs only its
+      # public headers, so doc.h is missing from the install tree - take the whole SPIRV
+      # directory from the source checkout, then let the installed copies win where both
+      # exist.
       - name: Mirror SPIRV headers (Unix)
         if: runner.os != 'Windows'
         run: |
