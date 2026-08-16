@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       lib_version:
-        description: 'slang tag (e.g. v2025.6.3)'
+        description: 'slang tag (e.g. v2026.14)'
         required: true
-        default: 'v2025.6.3'
+        default: 'v2026.14'
   push:
     tags: ['slang-*']
 

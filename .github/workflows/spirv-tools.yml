@@ -109,22 +109,30 @@ jobs:
 
       # glslang installs its SPIR-V headers under include/glslang/SPIRV. Source 2 includes
       # them as <SPIRV/...>, so mirror them to the top level and keep both layouts working.
+      # Source 2 includes <SPIRV/doc.h> and <SPIRV/SPVRemapper.h>. glslang installs only
+      # its public headers, so doc.h is missing from the install tree - take the whole
+      # SPIRV directory from the source checkout instead, then let the installed copies
+      # win where both exist.
       - name: Mirror SPIRV headers (Unix)
         if: runner.os != 'Windows'
         run: |
+          mkdir -p dist/include/SPIRV
+          cp -r src/SPIRV/*.h dist/include/SPIRV/
           if [ -d dist/include/glslang/SPIRV ]; then
-            mkdir -p dist/include/SPIRV
             cp -r dist/include/glslang/SPIRV/. dist/include/SPIRV/
           fi
+          test -f dist/include/SPIRV/doc.h
 
       - name: Mirror SPIRV headers (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force dist\include\SPIRV | Out-Null
+          Copy-Item -Force src\SPIRV\*.h dist\include\SPIRV\
           if (Test-Path dist\include\glslang\SPIRV) {
-            New-Item -ItemType Directory -Force dist\include\SPIRV | Out-Null
             Copy-Item -Recurse -Force dist\include\glslang\SPIRV\* dist\include\SPIRV\
           }
+          if (-not (Test-Path dist\include\SPIRV\doc.h)) { throw "SPIRV/doc.h missing from staged headers" }
 
       - uses: ./.github/actions/collect-package-upload
         with:
