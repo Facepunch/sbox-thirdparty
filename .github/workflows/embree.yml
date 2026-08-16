@@ -125,6 +125,29 @@ jobs:
           cmake --build src\build --parallel
           cmake --install src\build
 
+      # sbox links embree3.lib alone, but embree splits its symbols across tasking, sys,
+      # math, simd, lexers and the per ISA libs. Merge them so embree3.lib is complete -
+      # otherwise every consumer fails with hundreds of unresolved TaskScheduler externals.
+      - name: Merge static libraries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $libs = Get-ChildItem dist\lib -Filter *.lib | ForEach-Object { $_.FullName }
+          if ( $libs.Count -lt 2 ) { throw "expected several embree libs to merge, found $($libs.Count)" }
+          lib /nologo /OUT:"$env:GITHUB_WORKSPACE\embree3_merged.lib" $libs
+          if ( $LASTEXITCODE -ne 0 ) { throw "lib.exe merge failed" }
+          Remove-Item dist\lib\*.lib -Force
+          Move-Item "$env:GITHUB_WORKSPACE\embree3_merged.lib" dist\lib\embree3.lib
+
+      - name: Merge static libraries (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd dist/lib
+          mkdir -p .merge && cd .merge
+          for a in ../*.a; do ar x "$a"; done
+          ar rcs ../libembree3_merged.a ./*.o
+          cd .. && rm -f *.a && mv libembree3_merged.a libembree3.a && rm -rf .merge
+
       # embree's install drops the MSVC redistributables next to its libraries and the
       # packaging step globs every dll, so they end up in the archive. We ship our own
       # runtime; drop them rather than overwrite anyone's.
