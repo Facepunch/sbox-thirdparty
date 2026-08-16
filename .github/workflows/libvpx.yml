@@ -137,4 +137,3 @@ jobs:
     with:
       release_tag: ${{ needs.setup.outputs.release_tag }}
       display_name: "libvpx ${{ needs.setup.outputs.lib_version }}"
-    secrets: inherit

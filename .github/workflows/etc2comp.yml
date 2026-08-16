@@ -116,4 +116,3 @@ jobs:
     with:
       release_tag: ${{ needs.setup.outputs.release_tag }}
       display_name: "etc2comp ${{ needs.setup.outputs.lib_version }}"
-    secrets: inherit

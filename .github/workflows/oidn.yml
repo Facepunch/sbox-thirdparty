@@ -123,4 +123,3 @@ jobs:
     with:
       release_tag: ${{ needs.setup.outputs.release_tag }}
       display_name: "oidn ${{ needs.setup.outputs.lib_version }}"
-    secrets: inherit

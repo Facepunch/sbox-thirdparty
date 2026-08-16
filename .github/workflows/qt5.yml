@@ -127,4 +127,3 @@ jobs:
     with:
       release_tag: ${{ needs.setup.outputs.release_tag }}
       display_name: "qt5 (Facepunch/qt ${{ needs.setup.outputs.lib_version }})"
-    secrets: inherit

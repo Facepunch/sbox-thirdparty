@@ -109,4 +109,3 @@ jobs:
     with:
       release_tag: ${{ needs.setup.outputs.release_tag }}
       display_name: "openxr-loader ${{ needs.setup.outputs.lib_version }}"
-    secrets: inherit
