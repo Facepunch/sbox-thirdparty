@@ -132,15 +132,28 @@ jobs:
           if ( $LASTEXITCODE -ne 0 ) { throw "lib.exe merge failed" }
           Remove-Item dist\lib\*.lib -Force
           Move-Item "$env:GITHUB_WORKSPACE\embree3_merged.lib" dist\lib\embree3.lib
+          # LINKERMEMBER lists just the archive's public symbols, so this stays cheap.
+          if ( -not ( dumpbin /nologo /LINKERMEMBER:1 dist\lib\embree3.lib | Select-String threadID ) )
+          {
+            throw "merged lib is missing TaskScheduler"
+          }
 
+      # ar -M merges archives directly. Extracting to a directory instead would lose
+      # objects: each per ISA library carries its own bvh.cpp.o and friends, so they
+      # overwrite each other on the way out.
       - name: Merge static libraries (Unix)
         if: runner.os != 'Windows'
         run: |
           cd dist/lib
-          mkdir -p .merge && cd .merge
-          for a in ../*.a; do ar x "$a"; done
-          ar rcs ../libembree3_merged.a ./*.o
-          cd .. && rm -f *.a && mv libembree3_merged.a libembree3.a && rm -rf .merge
+          count=$(ls *.a | wc -l)
+          if [ "$count" -lt 2 ]; then echo "expected several embree libs to merge, found $count"; exit 1; fi
+          merged="$GITHUB_WORKSPACE/libembree3_merged.a"
+          { echo "create $merged"
+            for a in *.a; do echo "addlib $a"; done
+            echo "save"; echo "end"; } | ar -M
+          rm -f *.a
+          mv "$merged" libembree3.a
+          nm -C libembree3.a | grep -q "TaskScheduler::threadID" || { echo "merged lib is missing TaskScheduler"; exit 1; }
 
       # embree's install drops the MSVC redistributables next to its libraries and the
       # packaging step globs every dll, so they end up in the archive. We ship our own
