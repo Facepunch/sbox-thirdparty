@@ -84,9 +84,15 @@ jobs:
           meson compile -C src/build
           meson install -C src/build
 
+      # CC/CXX pin meson to MSVC. Left to autodetect it can resolve gcc from the runner
+      # image, and then it names the static library GNU-style (libdav1d.a) instead of the
+      # dav1d.lib that sbox links.
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          CC: cl
+          CXX: cl
         run: |
           # Meson rejects GNU link.exe from Git\usr\bin — strip it from PATH first.
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notlike '*Git\usr\bin*' }) -join ';'
@@ -96,6 +102,16 @@ jobs:
             --prefix="$env:GITHUB_WORKSPACE\dist"
           meson compile -C src\build
           meson install -C src\build
+
+          # dav1d declares a plain library('dav1d'), so the output name comes from the
+          # compiler meson picked. MSVC yields dav1d.lib, which is what sbox links; a
+          # GNU-style libdav1d.a means meson resolved a different compiler, so fail here
+          # rather than publish an archive nothing can find.
+          if ( -not ( Get-ChildItem "$env:GITHUB_WORKSPACE\dist" -Recurse -Filter dav1d.lib ) )
+          {
+            Get-ChildItem "$env:GITHUB_WORKSPACE\dist" -Recurse -Include *.a,*.lib | ForEach-Object { Write-Host "produced: $($_.Name)" }
+            throw "meson did not produce dav1d.lib - check which compiler it detected above"
+          }
 
       - uses: ./.github/actions/collect-package-upload
         with:
