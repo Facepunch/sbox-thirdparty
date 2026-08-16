@@ -118,6 +118,14 @@ jobs:
           cmake --build src\build --parallel
           cmake --install src\build
 
+      # embree's install drops the MSVC redistributables next to its libraries and the
+      # packaging step globs every dll, so they end up in the archive. We ship our own
+      # runtime; drop them rather than overwrite anyone's.
+      - name: Drop MSVC redistributables
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Get-ChildItem dist -Recurse -Include msvcp*.dll,vcruntime*.dll,concrt*.dll | Remove-Item -Force
+
       - uses: ./.github/actions/collect-package-upload
         with:
           lib_name: embree
