@@ -57,6 +57,22 @@ jobs:
       - name: Clone FidelityFX-SDK ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --recurse-submodules --shallow-submodules --branch ${{ needs.setup.outputs.lib_version }} https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK src
 
+      # sbox never links vulkan-1; it loads Vulkan through volk at runtime, so the backend
+      # has to be built against volk's function pointers rather than the import library.
+      # Without this the resulting .lib pulls in vulkan-1 imports that sbox cannot resolve.
+      # git apply fails loudly if a version bump moves the code out from under the patch,
+      # which is the point - better a red build than a silently unpatched backend.
+      - name: Apply patches
+        working-directory: src
+        run: git apply --verbose ../patches/fidelityfx-fsr3/*.patch
+
+      # volk.h is pinned to VOLK_HEADER_VERSION 304, matching src/thirdparty/vulkan/volk
+      # in sbox, so the backend compiles against the same declarations it links against.
+      - name: Fetch volk
+        run: git clone --depth 1 --branch ${{ env.VOLK_VERSION }} https://github.com/zeux/volk volk
+        env:
+          VOLK_VERSION: '1.4.304'
+
       # The SDK compiles its shader permutations through FidelityFX_SC, which shells out
       # to glslangValidator/dxc from the Vulkan SDK.
       - name: Install Vulkan SDK
@@ -83,6 +99,8 @@ jobs:
         run: |
           cmake -B build -A x64 `
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" `
+            "-DCMAKE_CXX_FLAGS=/I`"$env:GITHUB_WORKSPACE\volk`"" `
+            "-DCMAKE_C_FLAGS=/I`"$env:GITHUB_WORKSPACE\volk`"" `
             -DFFX_API_BACKEND=VK_X64 `
             -DFFX_FSR3=ON `
             -DFFX_AUTO_COMPILE_SHADERS=ON
