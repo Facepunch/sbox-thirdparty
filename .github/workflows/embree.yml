@@ -43,9 +43,7 @@ jobs:
           - { os: ubuntu-24.04,   platform: linuxsteamrt64 }
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.platform }}
-    # win64 legitimately takes around two hours: MSVC compiles the whole kernel set once
-    # per ISA on a 4 core runner. Capped well above that so a real hang still fails, but
-    # a normal build is never cut off.
+    # win64 takes about two hours: MSVC compiles the kernel set once per ISA.
     timeout-minutes: 240
 
     steps:
@@ -65,13 +63,8 @@ jobs:
       - name: Clone embree ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/embree/embree src
 
-      # win64 builds AVX + AVX2 only. sbox forces /arch:AVX on Windows
-      # (SboxBuild Native/Platforms/Win64.cs), so a CPU without AVX cannot run the engine
-      # at all, and one with AVX always picks embree's AVX kernels over SSE42 - the lower
-      # kernels are unreachable there, and dropping them roughly halves this build.
-      #
-      # Linux keeps the full range down to SSE2, because LinuxSteamRt64.cs compiles with
-      # -msse2 and no AVX, so SIMDLEVEL_DEFAULT genuinely resolves to SSE2 there.
+      # win64 needs AVX upwards only: sbox compiles with /arch:AVX there, so the lower
+      # kernels are unreachable. Linux compiles -msse2, so it keeps the full range.
       - name: Select ISA flags
         id: isa
         shell: bash
@@ -127,9 +120,8 @@ jobs:
           cmake --build src\build --parallel
           cmake --install src\build
 
-      # sbox links embree3.lib alone, but embree splits its symbols across tasking, sys,
-      # math, simd, lexers and the per ISA libs. Merge them so embree3.lib is complete -
-      # otherwise every consumer fails with hundreds of unresolved TaskScheduler externals.
+      # sbox links embree3 alone, but embree splits its symbols across tasking, sys, math,
+      # simd, lexers and the per ISA libs, so merge them into it.
       - name: Merge static libraries (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -145,15 +137,14 @@ jobs:
           {
             throw "merged lib is missing TaskScheduler"
           }
-          # Fail here rather than at link time in sbox, which is where this last went wrong.
+          # A dynamic CRT here fails at link time in sbox, so catch it now.
           if ( dumpbin /nologo /DIRECTIVES dist\lib\embree3.lib | Select-String "DEFAULTLIB:MSVCRT" )
           {
             throw "embree3.lib is linked against the dynamic CRT"
           }
 
-      # ar -M merges archives directly. Extracting to a directory instead would lose
-      # objects: each per ISA library carries its own bvh.cpp.o and friends, so they
-      # overwrite each other on the way out.
+      # ar -M merges archives in place. Extracting first would lose objects, since each
+      # per ISA library carries its own bvh.cpp.o.
       - name: Merge static libraries (Unix)
         if: runner.os != 'Windows'
         run: |
