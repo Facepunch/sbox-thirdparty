@@ -21,7 +21,6 @@ Versions below are each workflow's default; what sbox actually consumes is pinne
 | [lame](https://lame.sourceforge.io/) | 3.100 | MP3 encoding (libmp3lame) |
 | [SDL3](https://github.com/libsdl-org/SDL) | 2a623fd2 | Windowing, input, audio |
 | [embree](https://github.com/embree/embree) | v3.13.5 | CPU raytracing |
-| [etc2comp](https://github.com/google/etc2comp) | master | ETC2 compression |
 | [ispc_texcomp](https://github.com/GameTechDev/ISPCTextureCompressor) | master | BC6H/ASTC/BC1/BC3 compression |
 | [bc7enc](https://github.com/BinomialLLC/bc7e) | main | BC7 compression |
 | [spirv-tools](https://github.com/KhronosGroup/glslang) | 14.3.0 | SPIR-V opt and remap, built via glslang |
@@ -37,7 +36,7 @@ Versions below are each workflow's default; what sbox actually consumes is pinne
 `compressonator` also builds here (win64, linux64) but is not consumed by sbox yet.
 
 Not built here: `fbx`, `nvidia`, `ovrlipsync` and `superluminal`, which are vendor SDKs
-with no buildable source, and `FidelityFX-FSR3`, whose source and build tooling are
+with no buildable source, and `FidelityFX-FSR3` and `etc2comp`, whose sources are
 vendored in sbox and built there.
 
 ## Platforms
