@@ -30,15 +30,15 @@ Versions below are each workflow's default; what sbox actually consumes is pinne
 | [openexr](https://github.com/AcademySoftwareFoundation/openexr) | v2.5.8 | EXR images for lightmaps, IlmBase for alembic |
 | [alembic](https://github.com/alembic/alembic) | 1.7.16 | Alembic cache import |
 | [oidn](https://github.com/RenderKit/oidn) | v1.4.3 | Lightmap denoising |
-| [fidelityfx-fsr3](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) | v1.1.4 | FSR3 upscaling |
 | [sentry-native](https://github.com/getsentry/sentry-native) | 0.11.3 | Crash reporting |
 | [openxr-loader](https://github.com/KhronosGroup/OpenXR-SDK) | release-1.1.43 | OpenXR loader |
 | [qt5](https://github.com/Facepunch/qt) | master | Tools UI, our fork |
 
 `compressonator` also builds here (win64, linux64) but is not consumed by sbox yet.
 
-Not built here: `fbx`, `nvidia`, `ovrlipsync` and `superluminal`. Vendor SDKs with no
-buildable source, so they stay vendored in sbox.
+Not built here: `fbx`, `nvidia`, `ovrlipsync` and `superluminal`, which are vendor SDKs
+with no buildable source, and `FidelityFX-FSR3`, whose source and build tooling are
+vendored in sbox and built there.
 
 ## Platforms
 
@@ -56,7 +56,6 @@ Most libraries build all four. The exceptions, and why:
 | `embree` | win64, linux64 | No aarch64 support before embree 4, which is a different API. |
 | `ispc_texcomp`, `bc7enc` | win64, linux64 | The ISPC kernels have no NEON target. |
 | `oidn` | win64, linux64 | Same, and 2.x reworks the device API `vrad3` uses. |
-| `fidelityfx-fsr3` | win64 | AMD's SDK and shader compiler are Windows-only. |
 | `sentry-native` | win64 | sbox only builds the crash handler on Windows. |
 | `qt5` | win64, linux64 | The editor only ships on these two. |
 
