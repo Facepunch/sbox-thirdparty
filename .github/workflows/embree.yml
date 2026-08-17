@@ -1,7 +1,7 @@
 name: Build embree
 
-# Settings follow src/thirdparty/embree/README_VALVE.txt: no ISPC, internal tasking
-# (so we don't drag in TBB) and no tutorials. Source 2 links the static embree3.
+# No ISPC, internal tasking so TBB is not pulled in, and no tutorials. Source 2 links the
+# static embree3.
 #
 # Stay on 3.x. The API is stable across it, and 4 is a different one.
 

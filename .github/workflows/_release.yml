@@ -21,24 +21,33 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      # Idempotent: re-running a build for a version that already has a release replaces
-      # its assets instead of failing. A plain `gh release create` dies with "already
-      # exists", which is what reddened libyuv - two runs from one push raced, the first
-      # created the release and the second could only fail.
+      # Idempotent: re-running a version that already has a release replaces its assets.
+      # Create first and fall back only on "already exists", rather than asking whether the
+      # release exists: a lookup that fails for any other reason, as it does when the API is
+      # degraded, would send us to create and die there.
       - name: Create or update GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "${{ inputs.release_tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release ${{ inputs.release_tag }} exists - replacing assets"
-            gh release upload "${{ inputs.release_tag }}" \
-              --repo "${{ github.repository }}" \
-              --clobber \
-              artifacts/**
+          if out=$(gh release create "${{ inputs.release_tag }}" \
+            --repo "${{ github.repository }}" \
+            --title "${{ inputs.display_name }}" \
+            --notes "" \
+            artifacts/** 2>&1)
+          then
+            echo "$out"
           else
-            gh release create "${{ inputs.release_tag }}" \
-              --repo "${{ github.repository }}" \
-              --title "${{ inputs.display_name }}" \
-              --notes "" \
-              artifacts/**
+            echo "$out"
+            case "$out" in
+              *"already exists"*)
+                echo "Release exists, replacing its assets"
+                gh release upload "${{ inputs.release_tag }}" \
+                  --repo "${{ github.repository }}" \
+                  --clobber \
+                  artifacts/**
+                ;;
+              *)
+                exit 1
+                ;;
+            esac
           fi
