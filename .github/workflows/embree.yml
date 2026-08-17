@@ -101,6 +101,11 @@ jobs:
           cmake --build src/build --parallel
           cmake --install src/build
 
+      # The CRT has to be spelled into the flags. CMAKE_MSVC_RUNTIME_LIBRARY plus CMP0091
+      # is not enough here: the objects still come out /MD, and cl defaults to /MD when no
+      # flag reaches it. embree appends to CMAKE_CXX_FLAGS_RELEASE rather than overwriting
+      # it, so /MT set here survives. Do not switch to the USE_STATIC_RUNTIME option that
+      # embree's own compilation.md documents; it is not implemented in 3.13.x.
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -110,6 +115,8 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
             -DCMAKE_POLICY_DEFAULT_CMP0091=NEW `
+            "-DCMAKE_CXX_FLAGS_RELEASE=/MT /O2 /Ob2 /DNDEBUG" `
+            "-DCMAKE_C_FLAGS_RELEASE=/MT /O2 /Ob2 /DNDEBUG" `
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" `
             -DEMBREE_STATIC_LIB=ON `
             -DEMBREE_ISPC_SUPPORT=OFF `
@@ -137,6 +144,11 @@ jobs:
           if ( -not ( dumpbin /nologo /LINKERMEMBER:1 dist\lib\embree3.lib | Select-String threadID ) )
           {
             throw "merged lib is missing TaskScheduler"
+          }
+          # Fail here rather than at link time in sbox, which is where this last went wrong.
+          if ( dumpbin /nologo /DIRECTIVES dist\lib\embree3.lib | Select-String "DEFAULTLIB:MSVCRT" )
+          {
+            throw "embree3.lib is linked against the dynamic CRT"
           }
 
       # ar -M merges archives directly. Extracting to a directory instead would lose
