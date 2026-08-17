@@ -82,7 +82,8 @@ jobs:
           cmake -S zlib-src -B zlib-build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\zlib-dist" `
-            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
           cmake --build zlib-build --parallel
           cmake --install zlib-build
 
@@ -118,6 +119,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DCMAKE_POLICY_DEFAULT_CMP0091=NEW `
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" `
             -DCMAKE_PREFIX_PATH="$env:GITHUB_WORKSPACE\zlib-dist" `
             -DZLIB_ROOT="$env:GITHUB_WORKSPACE\zlib-dist" `

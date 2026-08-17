@@ -109,6 +109,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DCMAKE_POLICY_DEFAULT_CMP0091=NEW `
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" `
             -DEMBREE_STATIC_LIB=ON `
             -DEMBREE_ISPC_SUPPORT=OFF `
