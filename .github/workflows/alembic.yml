@@ -159,6 +159,10 @@ jobs:
           cmake --build src/build --parallel
           cmake --install src/build
 
+      # CMAKE_MSVC_RUNTIME_LIBRARY does not reach this project even with CMP0091 set: CMake
+      # reports the variable as used, and the objects still come out /MD. So spell the CRT
+      # into the release flags, which is what CMP0091=OLD would have done anyway. The rest
+      # of the string is CMake's own default for MSVC Release.
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -168,6 +172,8 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
             -DCMAKE_POLICY_DEFAULT_CMP0091=NEW `
+            "-DCMAKE_CXX_FLAGS_RELEASE=/MT /O2 /Ob2 /DNDEBUG" `
+            "-DCMAKE_C_FLAGS_RELEASE=/MT /O2 /Ob2 /DNDEBUG" `
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" `
             -DCMAKE_PREFIX_PATH="$env:GITHUB_WORKSPACE\deps" `
             -DILMBASE_ROOT="$env:GITHUB_WORKSPACE\deps" `
@@ -180,6 +186,10 @@ jobs:
             -DALEMBIC_BUILD_LIBS=ON
           cmake --build src\build --parallel
           cmake --install src\build
+          # Fail here rather than at link time in sbox, which is where this last went wrong.
+          $crt = dumpbin /nologo /DIRECTIVES ( Get-ChildItem dist -Recurse -Filter Alembic.lib | Select-Object -First 1 ).FullName |
+            Select-String -Pattern "DEFAULTLIB:MSVCRT"
+          if ( $crt ) { throw "Alembic.lib is still linked against the dynamic CRT" }
 
       - uses: ./.github/actions/collect-package-upload
         with:
