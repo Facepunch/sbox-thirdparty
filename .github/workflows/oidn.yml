@@ -2,12 +2,14 @@ name: Build oidn
 
 # Intel Open Image Denoise, used by src/utils/vrad3 to denoise baked lighting.
 #
-# sbox vendors 1.1.0 (2019). The default here is the last 1.4.x, which keeps the same
-# oidn 1.x C API (oidnNewDevice / oidnNewFilter / oidnSetSharedFilterImage / oidnExecute)
-# so vrad3 needs no source change. Do NOT jump to 2.x - that reworks the device/API model.
+# Stay on 1.4.x: it keeps the oidn 1.x C API (oidnNewDevice / oidnNewFilter /
+# oidnSetSharedFilterImage / oidnExecute) that vrad3 calls. 2.x reworks the device model.
 #
-# win64 only, matching vrad3.build.cs. TBB and ISPC are pulled in as prebuilt releases;
-# both are build-time toolchain inputs for oidn rather than things we ship from source.
+# No aarch64: 1.x's ISPC kernels only have SSE/AVX targets, so there is nothing to compile
+# for NEON. That needs 2.x, which is the API change above.
+#
+# TBB and ISPC come from their own prebuilt releases. They are build time toolchain inputs
+# for oidn rather than things we build from source.
 
 on:
   workflow_dispatch:
@@ -52,19 +54,31 @@ jobs:
 
   build:
     needs: setup
-    runs-on: windows-latest
-    name: win64
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, platform: win64 }
+          - { os: ubuntu-24.04,   platform: linuxsteamrt64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Install cmake + ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Install ISPC ${{ needs.setup.outputs.ispc_version }}
+      - name: Install ISPC ${{ needs.setup.outputs.ispc_version }} (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $v = "${{ needs.setup.outputs.ispc_version }}"
@@ -74,7 +88,18 @@ jobs:
           if (-not $exe) { throw "ispc.exe not found in release archive" }
           Add-Content -Path $env:GITHUB_ENV -Value "ISPC_EXECUTABLE=$exe"
 
-      - name: Install oneTBB ${{ needs.setup.outputs.tbb_version }}
+      - name: Install ISPC ${{ needs.setup.outputs.ispc_version }} (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          v="${{ needs.setup.outputs.ispc_version }}"
+          curl -sSL -o ispc.tar.gz "https://github.com/ispc/ispc/releases/download/$v/ispc-$v-linux.tar.gz"
+          mkdir -p ispc_dl && tar -xzf ispc.tar.gz -C ispc_dl
+          exe=$(find ispc_dl -type f -name ispc -perm -u+x | head -1)
+          if [ -z "$exe" ]; then echo "ispc not found in release archive"; exit 1; fi
+          echo "ISPC_EXECUTABLE=$(realpath "$exe")" >> $GITHUB_ENV
+
+      - name: Install oneTBB ${{ needs.setup.outputs.tbb_version }} (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $v = "${{ needs.setup.outputs.tbb_version }}"
@@ -84,10 +109,21 @@ jobs:
           if (-not $root) { throw "oneTBB root not found in release archive" }
           Add-Content -Path $env:GITHUB_ENV -Value "TBB_ROOT=$root"
 
+      - name: Install oneTBB ${{ needs.setup.outputs.tbb_version }} (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          v="${{ needs.setup.outputs.tbb_version }}"
+          curl -sSL -o tbb.tgz "https://github.com/uxlfoundation/oneTBB/releases/download/v$v/oneapi-tbb-$v-lin.tgz"
+          mkdir -p tbb_dl && tar -xzf tbb.tgz -C tbb_dl
+          root=$(find tbb_dl -maxdepth 2 -type d -name "oneapi-tbb-*" | head -1)
+          if [ -z "$root" ]; then echo "oneTBB root not found in release archive"; exit 1; fi
+          echo "TBB_ROOT=$(realpath "$root")" >> $GITHUB_ENV
+
       - name: Clone oidn ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --recurse-submodules --shallow-submodules --branch ${{ needs.setup.outputs.lib_version }} https://github.com/RenderKit/oidn src
 
-      - name: Build
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cmake -S src -B src\build -G Ninja `
@@ -101,9 +137,25 @@ jobs:
           cmake --build src\build --parallel
           cmake --install src\build
 
-      # oidn's DLL has a hard runtime dependency on TBB, and sbox ships tbb.dll next to it
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DISPC_EXECUTABLE="$ISPC_EXECUTABLE" \
+            -DTBB_ROOT="$TBB_ROOT" \
+            -DOIDN_STATIC_LIB=OFF \
+            -DOIDN_APPS=OFF
+          cmake --build src/build --parallel
+          cmake --install src/build
+
+      # oidn has a hard runtime dependency on TBB, and sbox ships it next to the library
       # today, so carry the redistributables in the same archive.
-      - name: Stage TBB redistributables
+      - name: Stage TBB redistributables (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist\lib | Out-Null
@@ -111,11 +163,19 @@ jobs:
             Where-Object { $_.FullName -notmatch 'debug' } |
             Copy-Item -Destination dist\lib\ -Force
 
+      - name: Stage TBB redistributables (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist/lib
+          # Copy the real files and their SONAME symlinks, skipping the debug variants.
+          find "$TBB_ROOT" -name "libtbb*.so*" ! -path "*debug*" -exec cp -P {} dist/lib/ \;
+          ls -l dist/lib
+
       - uses: ./.github/actions/collect-package-upload
         with:
           lib_name: oidn
           lib_version: ${{ needs.setup.outputs.lib_version }}
-          platform: win64
+          platform: ${{ matrix.platform }}
 
   release:
     needs: [setup, build]
