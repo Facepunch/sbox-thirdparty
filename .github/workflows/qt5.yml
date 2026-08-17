@@ -94,6 +94,13 @@ jobs:
 
           Copy-Item "$build\lib\Qt5*.lib" dist\lib\
           Copy-Item "$build\bin\Qt5*.dll" dist\bin\
+
+          # Symbols for the Qt frames in an editor crash. Qt puts them next to either the
+          # dll or the lib depending on the module, so search the prefix.
+          $pdbs = Get-ChildItem $build -Recurse -Filter "Qt5*.pdb" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '\\plugins\\' }
+          if ( $pdbs ) { $pdbs | Copy-Item -Destination dist\bin\ -Force }
+          else { Write-Host "::warning::no Qt5 pdbs found under $build" }
           foreach ($tool in @('moc','rcc','uic')) {
             Get-ChildItem "$build\bin" -Filter "$tool.*" | Copy-Item -Destination dist\bin\
           }
