@@ -63,20 +63,13 @@ jobs:
       - name: Clone embree ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/embree/embree src
 
-      # win64 needs AVX upwards only: sbox compiles with /arch:AVX there, so the lower
-      # kernels are unreachable. Linux compiles -msse2, so it keeps the full range.
+      # Do not trim the lower ISAs with the individual EMBREE_ISA_* switches. Making AVX the
+      # lowest makes it the base ISA too, so the core kernels land in embree3 already
+      # namespaced embree::avx and collide with embree_avx when the libraries are merged.
       - name: Select ISA flags
         id: isa
         shell: bash
-        run: |
-          # EMBREE_MAX_ISA=NONE is required for the individual EMBREE_ISA_* switches to be
-          # read at all - otherwise embree derives the ISA set from EMBREE_MAX_ISA and
-          # silently ignores them, building every ISA from SSE2 up.
-          if [ "${{ matrix.platform }}" = "win64" ]; then
-            echo "flags=-DEMBREE_MAX_ISA=NONE -DEMBREE_ISA_SSE2=OFF -DEMBREE_ISA_SSE42=OFF -DEMBREE_ISA_AVX=ON -DEMBREE_ISA_AVX2=ON -DEMBREE_ISA_AVX512=OFF" >> $GITHUB_OUTPUT
-          else
-            echo "flags=-DEMBREE_MAX_ISA=AVX2 -DEMBREE_ISA_AVX512=OFF" >> $GITHUB_OUTPUT
-          fi
+        run: echo "flags=-DEMBREE_MAX_ISA=AVX2 -DEMBREE_ISA_AVX512=OFF" >> $GITHUB_OUTPUT
 
       - name: Build (Unix)
         if: runner.os != 'Windows'
