@@ -1,9 +1,10 @@
-name: Build spirv-tools
+name: Build glslang
 
-# Source 2 only links SPIRV-Tools, SPIRV-Tools-opt and SPVRemapper, but SPVRemapper is a
-# glslang target and SPIRV-Tools is pulled in as a glslang subproject, so we build glslang
-# with ENABLE_OPT=ON and ship the resulting SPIR-V libraries. This mirrors what
-# src/thirdparty/spirv-tools/build_cmake_2022.bat used to do by hand.
+# Source 2 links SPVRemapper, which is a glslang target, plus SPIRV-Tools and
+# SPIRV-Tools-opt, which glslang pulls in as a subproject under ENABLE_OPT=ON. One glslang
+# build therefore covers all three, with a single spirv.hpp behind them. That is why this is
+# named after glslang and versioned by its tag, even though most of what sbox consumes is
+# the SPIR-V tooling; the SPIRV-Tools revision is whatever known_good.json pins.
 
 on:
   workflow_dispatch:
@@ -13,7 +14,7 @@ on:
         required: true
         default: '14.3.0'
   push:
-    tags: ['spirv-tools-*']
+    tags: ['glslang-*']
 
 jobs:
   setup:
@@ -25,12 +26,12 @@ jobs:
       - id: ver
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
-            V="${{ github.ref_name }}"; V="${V#spirv-tools-}"
+            V="${{ github.ref_name }}"; V="${V#glslang-}"
           else
             V="${{ inputs.lib_version }}"
           fi
           echo "lib_version=$V" >> $GITHUB_OUTPUT
-          echo "release_tag=spirv-tools-$V" >> $GITHUB_OUTPUT
+          echo "release_tag=glslang-$V" >> $GITHUB_OUTPUT
 
   build:
     needs: setup
@@ -138,7 +139,7 @@ jobs:
 
       - uses: ./.github/actions/collect-package-upload
         with:
-          lib_name: spirv-tools
+          lib_name: glslang
           lib_version: ${{ needs.setup.outputs.lib_version }}
           platform: ${{ matrix.platform }}
 
@@ -147,4 +148,4 @@ jobs:
     uses: ./.github/workflows/_release.yml
     with:
       release_tag: ${{ needs.setup.outputs.release_tag }}
-      display_name: "spirv-tools (glslang ${{ needs.setup.outputs.lib_version }})"
+      display_name: "glslang ${{ needs.setup.outputs.lib_version }}"

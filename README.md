@@ -23,14 +23,14 @@ Versions below are each workflow's default; what sbox actually consumes is pinne
 | [embree](https://github.com/embree/embree) | v3.13.5 | CPU raytracing |
 | [ispc_texcomp](https://github.com/GameTechDev/ISPCTextureCompressor) | master | BC6H/ASTC/BC1/BC3 compression |
 | [bc7enc](https://github.com/BinomialLLC/bc7e) | main | BC7 compression |
-| [spirv-tools](https://github.com/KhronosGroup/glslang) | 14.3.0 | SPIR-V opt and remap, built via glslang |
+| [glslang](https://github.com/KhronosGroup/glslang) | 14.3.0 | SPVRemapper, plus the SPIRV-Tools it builds as a subproject |
 | [slang](https://github.com/shader-slang/slang) | v2026.14 | Slang shader compiler |
 | [dxc](https://github.com/microsoft/DirectXShaderCompiler) | v1.8.2505 | HLSL preprocessing |
 | [openexr](https://github.com/AcademySoftwareFoundation/openexr) | v2.5.8 | EXR images for lightmaps, IlmBase for alembic |
 | [alembic](https://github.com/alembic/alembic) | 1.7.16 | Alembic cache import |
 | [oidn](https://github.com/RenderKit/oidn) | v1.4.3 | Lightmap denoising |
 | [sentry-native](https://github.com/getsentry/sentry-native) | 0.11.3 | Crash reporting |
-| [openxr-loader](https://github.com/KhronosGroup/OpenXR-SDK) | release-1.1.43 | OpenXR loader |
+| [openxr-loader](https://github.com/KhronosGroup/OpenXR-SDK) | release-1.1.43 | OpenXR loader and headers |
 | [qt5](https://github.com/Facepunch/qt) | master | Tools UI, our fork |
 
 `compressonator` also builds here (win64, linux64) but is not consumed by sbox yet.
