@@ -1,5 +1,15 @@
 name: Setup MSVC (amd64)
-description: Runs vcvarsall.bat amd64 and exports the resulting environment to GITHUB_ENV.
+description: Runs vcvarsall.bat amd64 for a pinned toolset and exports the environment to GITHUB_ENV.
+
+inputs:
+  toolset:
+    description: >
+      MSVC toolset to build with. Keep this equal to VCToolsVersion in sbox's
+      src/Directory.Build.props: the STL emits calls to vectorised helpers that only exist from
+      the toolset that introduced them, so anything built here needs a local toolset at least as
+      new to link. Pinning both ends stops a runner image update from quietly raising that floor.
+    required: false
+    default: '14.51.36231'
 
 runs:
   using: composite
@@ -14,10 +24,18 @@ runs:
         if (-not $vsPath) { Write-Error "Visual Studio not found"; exit 1 }
 
         $vcvarsall = Join-Path $vsPath "VC\Auxiliary\Build\vcvarsall.bat"
-        Write-Host "vcvarsall: $vcvarsall"
+        $toolset = '${{ inputs.toolset }}'
+        Write-Host "vcvarsall: $vcvarsall (toolset $toolset)"
 
         # Run vcvarsall and capture the resulting environment
-        cmd /c "`"$vcvarsall`" amd64 >nul 2>&1 && set" | ForEach-Object {
+        $captured = cmd /c "`"$vcvarsall`" amd64 -vcvars_ver=$toolset >nul 2>&1 && set"
+        if (-not ($captured -match "^VCToolsVersion=$([regex]::Escape($toolset))$")) {
+          $have = (Get-ChildItem (Join-Path $vsPath 'VC\Tools\MSVC') -Directory -ErrorAction SilentlyContinue).Name -join ', '
+          Write-Error "MSVC $toolset is not installed on this runner (found: $have). Update the toolset input here and VCToolsVersion in sbox's src/Directory.Build.props together."
+          exit 1
+        }
+
+        $captured | ForEach-Object {
           if ($_ -match '^([^=]+)=(.*)$') {
             $name  = $Matches[1]
             $value = $Matches[2]

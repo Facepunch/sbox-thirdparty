@@ -74,8 +74,13 @@ than failing.
 
 - **MSVC runtime.** Source 2 sets `RuntimeLibrary=MultiThreaded`, so static libraries build
   `/MT`. Libraries loaded as DLLs use `/MD` and own their own CRT.
-- **MSVC version.** Artifacts use whatever MSVC the runner has, so linking them needs a
-  local toolset at least as new. sbox pins one in `src/Directory.Build.props`.
+- **MSVC version.** Windows artifacts are built with a pinned toolset, set by the `toolset`
+  input of `.github/actions/setup-msvc` (currently 14.51.36231). The STL emits calls to
+  vectorised helpers that only exist from the toolset that introduced them, so anything built
+  here needs a local toolset at least as new to link. Keep the pin equal to `VCToolsVersion` in
+  sbox's `src/Directory.Build.props` and move both together, otherwise a runner image update
+  raises that floor without anyone deciding to. The build fails outright if the pinned toolset
+  is missing from the runner.
 - **Version floors.** `openexr`, `alembic` and `oidn` are held on their current major
   versions; the next one is a source change in sbox, not a dependency bump.
 - **qt5** builds [Facepunch/qt](https://github.com/Facepunch/qt), never upstream Qt. Our
