@@ -1,9 +1,8 @@
 name: Build openxr-loader
 
-# The OpenXR loader that engine2.build.cs links as openxr_loader.lib. Note this one does
-# not live under src/thirdparty in sbox - the import lib sits in src/lib/public/win64/vc14
-# and the DLL ships from game/bin/win64 - while the headers are vendored separately in
-# src/thirdparty/openxr/include. Only the loader binary is built here.
+# The OpenXR loader that engine2.build.cs links as openxr_loader.lib, plus the SDK headers
+# that fpxr compiles against. cmake --install stages the public openxr/ ones; xr_linear.h is
+# a common helper the install tree leaves behind, so it is mirrored in below.
 
 on:
   workflow_dispatch:
@@ -96,6 +95,22 @@ jobs:
             -DBUILD_API_LAYERS=OFF
           cmake --build src\build --parallel
           cmake --install src\build
+
+      # fpxr includes "xr_linear.h", a header only math helper that lives in the SDK's
+      # src/common rather than its install tree. Take it from the checkout so the release
+      # carries every header sbox compiles against.
+      - name: Mirror xr_linear.h (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cp src/src/common/xr_linear.h dist/include/
+          test -f dist/include/xr_linear.h
+
+      - name: Mirror xr_linear.h (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item -Force src\src\common\xr_linear.h dist\include\
+          if (-not (Test-Path dist\include\xr_linear.h)) { throw "xr_linear.h missing from staged headers" }
 
       - uses: ./.github/actions/collect-package-upload
         with:
