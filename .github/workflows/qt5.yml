@@ -6,6 +6,9 @@ name: Build qt5
 #
 # Packaged by hand rather than through collect-package-upload, which flattens everything
 # into lib/. Qt needs its moc/rcc/uic host tools and its plugin trees kept as directories.
+#
+# The archive also carries a runtime/ tree holding just the modules and plugins sbox ships,
+# already laid out the way they appear under game/bin, so sbox copies it verbatim.
 
 on:
   workflow_dispatch:
@@ -112,6 +115,25 @@ jobs:
 
           if (-not (Get-ChildItem dist\lib -Filter Qt5Core.lib)) { throw "Qt5Core.lib missing from staged output" }
 
+          # runtime/ is what sbox copies beside the engine, laid out as it lands there. Qt builds
+          # far more than the editor loads, so the shipped set is named here rather than in sbox.
+          # Concurrent is not linked but Core pulls it in.
+          New-Item -ItemType Directory -Force dist\runtime\qt5_plugins\imageformats, dist\runtime\qt5_plugins\platforms | Out-Null
+          foreach ($m in @('Qt5Concurrent','Qt5Core','Qt5Gui','Qt5Widgets')) {
+            Get-ChildItem dist\bin -Filter "$m.*" | Copy-Item -Destination dist\runtime\
+          }
+          foreach ($p in @('qgif','qico','qjpeg','qtga','qwbmp')) {
+            Get-ChildItem dist\plugins\imageformats -Filter "$p.*" -ErrorAction SilentlyContinue |
+              Copy-Item -Destination dist\runtime\qt5_plugins\imageformats\
+          }
+          Get-ChildItem dist\plugins\platforms -Filter "qwindows.*" |
+            Copy-Item -Destination dist\runtime\qt5_plugins\platforms\
+
+          foreach ($required in @('Qt5Core.dll', 'Qt5Gui.dll', 'Qt5Widgets.dll',
+                                  'qt5_plugins\imageformats\qjpeg.dll', 'qt5_plugins\platforms\qwindows.dll')) {
+            if (-not (Test-Path "dist\runtime\$required")) { throw "runtime\$required missing from staged output" }
+          }
+
       - name: Package
         shell: pwsh
         run: Compress-Archive -Path dist\* -DestinationPath "qt5-${{ needs.setup.outputs.lib_version }}-win64.zip"
@@ -193,6 +215,19 @@ jobs:
           done
 
           ls "$out/lib" | grep -q "libQt5Core" || { echo "libQt5Core missing from staged output"; exit 1; }
+
+          # See the Windows job: runtime/ is the shipped set, laid out as it lands in game/bin.
+          mkdir -p "$out/runtime/qt5_plugins/imageformats" "$out/runtime/qt5_plugins/platforms"
+          for m in Concurrent Core Gui Widgets; do
+            cp -a "$out"/lib/libQt5$m.so* "$out/runtime/"
+          done
+          for p in qgif qjpeg qwbmp; do
+            cp -a "$out/plugins/imageformats/lib$p.so" "$out/runtime/qt5_plugins/imageformats/" 2>/dev/null || true
+          done
+          cp -a "$out/plugins/platforms/libqxcb.so" "$out/runtime/qt5_plugins/platforms/"
+
+          ls "$out/runtime" | grep -q "libQt5Core" || { echo "runtime libQt5Core missing"; exit 1; }
+          [ -f "$out/runtime/qt5_plugins/platforms/libqxcb.so" ] || { echo "runtime libqxcb.so missing"; exit 1; }
 
       - name: Package
         run: tar czf "qt5-${{ needs.setup.outputs.lib_version }}-linuxsteamrt64.tar.gz" -C dist .
