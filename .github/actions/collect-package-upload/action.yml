@@ -11,6 +11,10 @@ inputs:
   platform:
     description: Platform identifier (e.g. win64)
     required: true
+  include_bin:
+    description: Carry dist/bin through as bin/, for a release that ships a host tool as well as a library.
+    required: false
+    default: 'false'
 
 runs:
   using: composite
@@ -23,6 +27,10 @@ runs:
         cp -r dist/include/. out/include/
         find dist -name "*.a" -exec cp {} out/lib/ \;
         find dist \( -name "*.so" -o -name "*.so.*" -o -name "*.dylib" \) -exec cp {} out/lib/ \; 2>/dev/null || true
+        if [ "${{ inputs.include_bin }}" = "true" ] && [ -d dist/bin ]; then
+          mkdir -p out/bin
+          cp -r dist/bin/. out/bin/
+        fi
 
     - name: Collect (Windows)
       if: runner.os == 'Windows'
@@ -31,6 +39,10 @@ runs:
         New-Item -ItemType Directory -Force out\include, out\lib | Out-Null
         Copy-Item -Recurse dist\include\* out\include\
         Get-ChildItem dist -Recurse -Include *.lib,*.a,*.dll | Copy-Item -Destination out\lib\
+        if ( '${{ inputs.include_bin }}' -eq 'true' -and ( Test-Path dist\bin ) ) {
+          New-Item -ItemType Directory -Force out\bin | Out-Null
+          Copy-Item -Recurse -Force dist\bin\* out\bin\
+        }
 
     - name: Package (Unix)
       if: runner.os != 'Windows'

@@ -105,23 +105,34 @@ jobs:
       - name: Stage dist (Unix)
         if: runner.os != 'Windows'
         run: |
-          mkdir -p dist/include/dxc dist/lib
+          mkdir -p dist/include/dxc dist/lib dist/bin
           cp src/include/dxc/*.h dist/include/dxc/ 2>/dev/null || true
           cp -r src/include/dxc/Support dist/include/dxc/ 2>/dev/null || true
           find src/build/lib src/build/bin -maxdepth 1 \( -name "libdxcompiler.so*" -o -name "libdxcompiler.dylib" \) -exec cp {} dist/lib/ \;
+          # sbox regenerates its built-in shaders with the dxc driver, which has to be the
+          # same build as the library beside it, so it ships here rather than being found.
+          find src/build/bin -maxdepth 1 -name dxc -exec cp {} dist/bin/ \;
+          test -f dist/bin/dxc
 
       - name: Stage dist (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force dist\include\dxc, dist\lib | Out-Null
+          New-Item -ItemType Directory -Force dist\include\dxc, dist\lib, dist\bin | Out-Null
           Copy-Item -Force src\include\dxc\*.h dist\include\dxc\
           if ( Test-Path src\include\dxc\Support ) { Copy-Item -Recurse -Force src\include\dxc\Support dist\include\dxc\ }
           if ( -not ( Test-Path dist\include\dxc\dxcapi.h ) ) { throw "dxcapi.h missing from staged headers" }
           Get-ChildItem src\build -Recurse -Include dxcompiler.dll,dxcompiler.lib | Copy-Item -Destination dist\lib\
 
+          # sbox regenerates its built-in shaders with the dxc driver, which has to be the
+          # same build as the library beside it, so it ships here rather than being found.
+          Get-ChildItem src\build -Recurse -Filter dxc.exe | Select-Object -First 1 |
+            Copy-Item -Destination dist\bin\
+          if ( -not ( Test-Path dist\bin\dxc.exe ) ) { throw "dxc.exe missing from the staged output" }
+
       - uses: ./.github/actions/collect-package-upload
         with:
+          include_bin: 'true'
           lib_name: dxc
           lib_version: ${{ needs.setup.outputs.lib_version }}
           platform: ${{ matrix.platform }}
