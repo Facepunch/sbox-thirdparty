@@ -171,6 +171,10 @@ jobs:
 
       # Mirrors valve/fp_config.bat, which is Windows only - same module skips and the
       # same -no-opengl/-no-openssl/-release choices, driven through the Unix configure.
+      # -no-icu is added on top: this runner is ubuntu-24.04, whose system ICU is 74, and
+      # configure would otherwise auto-detect it and leave libQt5Core needing libicu*.so.74
+      # at run time - absent on the Steam Runtime and most other distros. -no-icu makes Qt
+      # use its built-in Unicode tables instead, so the shipped libraries are self-contained.
       - name: Configure
         working-directory: qt/valve
         run: |
@@ -179,7 +183,7 @@ jobs:
           chmod +x configure qtbase/configure 2>/dev/null || true
           find . -maxdepth 4 -name configure -type f -exec chmod +x {} + 2>/dev/null || true
           find . -maxdepth 4 -path '*config.tests*' -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
-          ./configure             -prefix "$PWD/build_linux64"             -opensource -confirm-license             -release -force-debug-info             -nomake examples -nomake tests -nomake tools             -no-opengl -no-openssl             -skip 3d -skip activeqt -skip androidextras -skip charts             -skip connectivity -skip datavis3d -skip declarative -skip doc             -skip gamepad -skip graphicaleffects -skip location -skip lottie             -skip macextras -skip multimedia -skip networkauth -skip purchasing             -skip quick3d -skip quickcontrols -skip quickcontrols2             -skip quicktimeline -skip remoteobjects -skip script -skip scxml             -skip sensors -skip serialbus -skip serialport -skip speech             -skip svg -skip translations -skip virtualkeyboard -skip wayland             -skip webchannel -skip webengine -skip webglplugin -skip websockets             -skip webview -skip x11extras -skip xmlpatterns
+          ./configure             -prefix "$PWD/build_linux64"             -opensource -confirm-license             -release -force-debug-info             -nomake examples -nomake tests -nomake tools             -no-opengl -no-openssl -no-icu             -skip 3d -skip activeqt -skip androidextras -skip charts             -skip connectivity -skip datavis3d -skip declarative -skip doc             -skip gamepad -skip graphicaleffects -skip location -skip lottie             -skip macextras -skip multimedia -skip networkauth -skip purchasing             -skip quick3d -skip quickcontrols -skip quickcontrols2             -skip quicktimeline -skip remoteobjects -skip script -skip scxml             -skip sensors -skip serialbus -skip serialport -skip speech             -skip svg -skip translations -skip virtualkeyboard -skip wayland             -skip webchannel -skip webengine -skip webglplugin -skip websockets             -skip webview -skip x11extras -skip xmlpatterns
 
       - name: Build
         working-directory: qt/valve
