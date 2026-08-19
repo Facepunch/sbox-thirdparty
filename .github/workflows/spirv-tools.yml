@@ -130,6 +130,18 @@ jobs:
             if ( -not ( Test-Path $f ) ) { throw "$f missing from the staged install" }
           }
 
+      # SPIRV-Tools builds a shared library alongside the static ones whatever BUILD_SHARED_LIBS says.
+      # sbox links the static libs and nothing loads the dll, and collect-package-upload carries any dll
+      # it finds through to game/bin, so drop it here rather than ship 4MB nothing opens.
+      - name: Drop the unused shared library (Unix)
+        if: runner.os != 'Windows'
+        run: find dist -name 'libSPIRV-Tools-shared.*' -delete
+
+      - name: Drop the unused shared library (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Get-ChildItem dist -Recurse -Filter 'SPIRV-Tools-shared.*' | Remove-Item -Force
+
       - uses: ./.github/actions/collect-package-upload
         with:
           lib_name: spirv-tools
