@@ -113,11 +113,8 @@ jobs:
             -DTBB_TEST=OFF -DTBB_EXAMPLES=OFF -DTBB_STRICT=OFF
           cmake --build tbb_src/build --parallel
           cmake --install tbb_src/build
-          # oidn's FindTBB looks for tbb.lib, the static build names it tbb12.lib
-          $lib = Get-ChildItem "$root/lib" -Filter "tbb*.lib" |
-            Where-Object { $_.Name -notmatch 'malloc|proxy|bind|debug' } | Select-Object -First 1
-          if (-not $lib) { throw "no TBB import library in $root/lib" }
-          Copy-Item $lib.FullName "$root/lib/tbb.lib" -Force
+          # oidn's FindTBB does find_library(NAMES tbb), which is what the static build installs
+          if (-not (Test-Path "$root/lib/tbb.lib")) { throw "no tbb.lib in $root/lib" }
           Add-Content -Path $env:GITHUB_ENV -Value "TBB_ROOT=$root"
 
       - name: Build oneTBB ${{ needs.setup.outputs.tbb_version }} (Linux)
@@ -134,10 +131,8 @@ jobs:
             -DTBB_TEST=OFF -DTBB_EXAMPLES=OFF -DTBB_STRICT=OFF
           cmake --build tbb_src/build --parallel
           cmake --install tbb_src/build
-          # oidn's FindTBB looks for libtbb, the static build names it libtbb12.a
-          lib=$(ls "$root"/lib/libtbb*.a | grep -Ev 'malloc|proxy|bind|debug' | head -1)
-          if [ -z "$lib" ]; then echo "no TBB static library in $root/lib"; exit 1; fi
-          cp "$lib" "$root/lib/libtbb.a"
+          # oidn's FindTBB does find_library(NAMES tbb), which is what the static build installs
+          test -f "$root/lib/libtbb.a"
           echo "TBB_ROOT=$root" >> $GITHUB_ENV
 
       - name: Clone oidn ${{ needs.setup.outputs.lib_version }}
