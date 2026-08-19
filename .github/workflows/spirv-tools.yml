@@ -1,0 +1,144 @@
+name: Build spirv-tools
+
+# Source 2 links SPIRV-Tools and SPIRV-Tools-opt to run spirv-opt over the SPIR-V its shader
+# compiler emits. This used to come from the glslang build, which pulled SPIRV-Tools in as a
+# subproject and pinned whatever revision glslang's known_good.json named - so the SPIR-V tooling
+# was versioned by an unrelated project's release tag and lagged well behind. Building it directly
+# lets us track SPIRV-Tools' own releases, and drops glslang from the tree entirely.
+#
+# SPIRV-Headers is fetched by SPIRV-Tools' own utils/git-sync-deps, which pins the revision that
+# release was tested against.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'SPIRV-Tools tag (e.g. v2026.3). SPIRV-Headers comes from its DEPS'
+        required: true
+        default: 'v2026.3'
+  push:
+    tags: ['spirv-tools-*']
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#spirv-tools-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=spirv-tools-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   platform: win64 }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64 }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+        if: runner.os == 'Windows'
+
+      - name: Install cmake + ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build
+
+      - name: Install ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Clone SPIRV-Tools ${{ needs.setup.outputs.lib_version }}
+        run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/KhronosGroup/SPIRV-Tools src
+
+      - name: Fetch pinned SPIRV-Headers
+        working-directory: src
+        run: python utils/git-sync-deps
+
+      # SPIRV_WERROR is on by default upstream, and a toolchain newer than the one a release was
+      # tested against will find something to warn about. We are not fixing their warnings here.
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S src -B src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DSPIRV_WERROR=OFF \
+            -DSPIRV_SKIP_TESTS=ON \
+            -DSPIRV_SKIP_EXECUTABLES=ON \
+            -DBUILD_TESTING=OFF
+          cmake --build src/build --parallel
+          cmake --install src/build
+
+      # Static CRT (/MT) to match Source 2's RuntimeLibrary=MultiThreaded.
+      #
+      # Built with the runner's current MSVC. Its STL emits calls to vectorised algorithm
+      # helpers (__std_max_element_4u and friends) that only exist from the toolset which
+      # introduced them, so linking these artifacts needs a local MSVC at least as new as
+      # the runner's - currently 14.51 / VS 2026.
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S src -B src\build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DBUILD_SHARED_LIBS=OFF `
+            -DSPIRV_WERROR=OFF `
+            -DSPIRV_SKIP_TESTS=ON `
+            -DSPIRV_SKIP_EXECUTABLES=ON `
+            -DBUILD_TESTING=OFF
+          cmake --build src\build --parallel
+          cmake --install src\build
+
+      # The optimizer is the whole point of shipping this, so fail here rather than at link time
+      # in sbox if a cmake option rename ever quietly drops it.
+      - name: Check the staged libraries (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          test -f dist/lib/libSPIRV-Tools.a
+          test -f dist/lib/libSPIRV-Tools-opt.a
+          test -f dist/include/spirv-tools/optimizer.hpp
+
+      - name: Check the staged libraries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ( $f in 'dist\lib\SPIRV-Tools.lib', 'dist\lib\SPIRV-Tools-opt.lib', 'dist\include\spirv-tools\optimizer.hpp' ) {
+            if ( -not ( Test-Path $f ) ) { throw "$f missing from the staged install" }
+          }
+
+      - uses: ./.github/actions/collect-package-upload
+        with:
+          lib_name: spirv-tools
+          lib_version: ${{ needs.setup.outputs.lib_version }}
+          platform: ${{ matrix.platform }}
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "SPIRV-Tools ${{ needs.setup.outputs.lib_version }}"
