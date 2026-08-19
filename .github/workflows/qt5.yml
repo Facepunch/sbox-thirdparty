@@ -157,7 +157,7 @@ jobs:
       - name: Install build deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y build-essential libgl1-mesa-dev libfontconfig1-dev             libfreetype-dev libx11-dev libx11-xcb-dev libxext-dev libxfixes-dev             libxi-dev libxrender-dev libxcb1-dev libxcb-glx0-dev libxcb-keysyms1-dev             libxcb-image0-dev libxcb-shm0-dev libxcb-icccm4-dev libxcb-sync-dev             libxcb-xfixes0-dev libxcb-shape0-dev libxcb-randr0-dev             libxcb-render-util0-dev libxcb-util-dev libxcb-xinerama0-dev             libxcb-xkb-dev libxkbcommon-dev libxkbcommon-x11-dev libdbus-1-dev
+          sudo apt-get install -y build-essential libgl1-mesa-dev libfontconfig1-dev             libfreetype-dev libx11-dev libx11-xcb-dev libxext-dev libxfixes-dev             libxi-dev libxrender-dev libxcb1-dev libxcb-glx0-dev libxcb-keysyms1-dev             libxcb-image0-dev libxcb-shm0-dev libxcb-icccm4-dev libxcb-sync-dev             libxcb-xfixes0-dev libxcb-shape0-dev libxcb-randr0-dev             libxcb-render-util0-dev libxcb-util-dev libxcb-xinerama0-dev             libxcb-xkb-dev libxkbcommon-dev libxkbcommon-x11-dev libdbus-1-dev patchelf
 
       - name: Clone Facepunch/qt ${{ needs.setup.outputs.lib_version }}
         uses: actions/checkout@v4
@@ -221,8 +221,12 @@ jobs:
           ls "$out/lib" | grep -q "libQt5Core" || { echo "libQt5Core missing from staged output"; exit 1; }
 
           # See the Windows job: runtime/ is the shipped set, laid out as it lands in game/bin.
+          # The module list is the dependency closure the xcb platform plugin drags in, not just
+          # what sbox links against: the plugin needs libQt5XcbQpa, which in turn needs libQt5DBus,
+          # and neither is a direct sbox dependency - miss them and the plugin fails to load with
+          # "could not load the Qt platform plugin xcb".
           mkdir -p "$out/runtime/qt5_plugins/imageformats" "$out/runtime/qt5_plugins/platforms"
-          for m in Concurrent Core Gui Widgets; do
+          for m in Concurrent Core DBus Gui Widgets XcbQpa; do
             cp -a "$out"/lib/libQt5$m.so* "$out/runtime/"
           done
           for p in qgif qjpeg qwbmp; do
@@ -230,7 +234,20 @@ jobs:
           done
           cp -a "$out/plugins/platforms/libqxcb.so" "$out/runtime/qt5_plugins/platforms/"
 
+          # Qt links its plugins with RUNPATH $ORIGIN/../../lib, for its usual prefix/lib +
+          # prefix/plugins/<category> layout. runtime/ is flattened - the Qt libraries sit at its
+          # root (beside the engine under game/bin), not in a lib/ subdir - so that rpath points at
+          # a runtime/lib that does not exist, and the plugin cannot find libQt5XcbQpa etc. Repoint
+          # each plugin at the flattened layout: from runtime/qt5_plugins/<category>/ the modules
+          # are two directories up. (libQt5XcbQpa keeps its own $ORIGIN rpath, already correct once
+          # it sits at the root.) This is the same $ORIGIN-relative patchelf that linuxdeployqt and
+          # cqtdeployer apply when they bundle Qt.
+          for plugin in "$out"/runtime/qt5_plugins/*/*.so; do
+            patchelf --set-rpath '$ORIGIN/../..' "$plugin"
+          done
+
           ls "$out/runtime" | grep -q "libQt5Core" || { echo "runtime libQt5Core missing"; exit 1; }
+          ls "$out/runtime" | grep -q "libQt5XcbQpa" || { echo "runtime libQt5XcbQpa missing"; exit 1; }
           [ -f "$out/runtime/qt5_plugins/platforms/libqxcb.so" ] || { echo "runtime libqxcb.so missing"; exit 1; }
 
       - name: Package
