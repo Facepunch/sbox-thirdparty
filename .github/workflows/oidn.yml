@@ -8,8 +8,8 @@ name: Build oidn
 # No aarch64: 1.x's ISPC kernels only have SSE/AVX targets, so there is nothing to compile
 # for NEON. That needs 2.x, which is the API change above.
 #
-# TBB and ISPC come from their own prebuilt releases. They are build time toolchain inputs
-# for oidn rather than things we build from source.
+# ISPC comes from its own prebuilt release. TBB is built from source and linked statically,
+# because the official binaries import an appcontainer CRT that desktop Windows lacks.
 
 on:
   workflow_dispatch:
@@ -98,26 +98,47 @@ jobs:
           if [ -z "$exe" ]; then echo "ispc not found in release archive"; exit 1; fi
           echo "ISPC_EXECUTABLE=$(realpath "$exe")" >> $GITHUB_ENV
 
-      - name: Install oneTBB ${{ needs.setup.outputs.tbb_version }} (Windows)
+      - name: Build oneTBB ${{ needs.setup.outputs.tbb_version }} (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $v = "${{ needs.setup.outputs.tbb_version }}"
-          Invoke-WebRequest -Uri "https://github.com/uxlfoundation/oneTBB/releases/download/v$v/oneapi-tbb-$v-win.zip" -OutFile tbb.zip
-          Expand-Archive tbb.zip -DestinationPath tbb_dl
-          $root = (Get-ChildItem tbb_dl -Directory -Filter "oneapi-tbb-*" | Select-Object -First 1).FullName
-          if (-not $root) { throw "oneTBB root not found in release archive" }
+          $root = "$env:GITHUB_WORKSPACE\tbb"
+          git clone --depth 1 --branch "v$v" https://github.com/uxlfoundation/oneTBB tbb_src
+          cmake -S tbb_src -B tbb_src/build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$root" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DBUILD_SHARED_LIBS=OFF `
+            -DTBB_TEST=OFF -DTBB_EXAMPLES=OFF -DTBB_STRICT=OFF
+          cmake --build tbb_src/build --parallel
+          cmake --install tbb_src/build
+          # oidn's FindTBB looks for tbb.lib, the static build names it tbb12.lib
+          $lib = Get-ChildItem "$root/lib" -Filter "tbb*.lib" |
+            Where-Object { $_.Name -notmatch 'malloc|proxy|bind|debug' } | Select-Object -First 1
+          if (-not $lib) { throw "no TBB import library in $root/lib" }
+          Copy-Item $lib.FullName "$root/lib/tbb.lib" -Force
           Add-Content -Path $env:GITHUB_ENV -Value "TBB_ROOT=$root"
 
-      - name: Install oneTBB ${{ needs.setup.outputs.tbb_version }} (Linux)
+      - name: Build oneTBB ${{ needs.setup.outputs.tbb_version }} (Linux)
         if: runner.os == 'Linux'
         run: |
           v="${{ needs.setup.outputs.tbb_version }}"
-          curl -sSL -o tbb.tgz "https://github.com/uxlfoundation/oneTBB/releases/download/v$v/oneapi-tbb-$v-lin.tgz"
-          mkdir -p tbb_dl && tar -xzf tbb.tgz -C tbb_dl
-          root=$(find tbb_dl -maxdepth 2 -type d -name "oneapi-tbb-*" | head -1)
-          if [ -z "$root" ]; then echo "oneTBB root not found in release archive"; exit 1; fi
-          echo "TBB_ROOT=$(realpath "$root")" >> $GITHUB_ENV
+          root="$GITHUB_WORKSPACE/tbb"
+          git clone --depth 1 --branch "v$v" https://github.com/uxlfoundation/oneTBB tbb_src
+          cmake -S tbb_src -B tbb_src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$root" \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DTBB_TEST=OFF -DTBB_EXAMPLES=OFF -DTBB_STRICT=OFF
+          cmake --build tbb_src/build --parallel
+          cmake --install tbb_src/build
+          # oidn's FindTBB looks for libtbb, the static build names it libtbb12.a
+          lib=$(ls "$root"/lib/libtbb*.a | grep -Ev 'malloc|proxy|bind|debug' | head -1)
+          if [ -z "$lib" ]; then echo "no TBB static library in $root/lib"; exit 1; fi
+          cp "$lib" "$root/lib/libtbb.a"
+          echo "TBB_ROOT=$root" >> $GITHUB_ENV
 
       - name: Clone oidn ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --recurse-submodules --shallow-submodules --branch ${{ needs.setup.outputs.lib_version }} https://github.com/RenderKit/oidn src
@@ -132,6 +153,7 @@ jobs:
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" `
             -DISPC_EXECUTABLE="$env:ISPC_EXECUTABLE" `
             -DTBB_ROOT="$env:TBB_ROOT" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
             -DOIDN_STATIC_LIB=OFF `
             -DOIDN_APPS=OFF
           cmake --build src\build --parallel
@@ -151,25 +173,6 @@ jobs:
             -DOIDN_APPS=OFF
           cmake --build src/build --parallel
           cmake --install src/build
-
-      # oidn has a hard runtime dependency on TBB, and sbox ships it next to the library
-      # today, so carry the redistributables in the same archive.
-      - name: Stage TBB redistributables (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist\lib | Out-Null
-          Get-ChildItem "$env:TBB_ROOT" -Recurse -Include tbb12.dll,tbb.dll,tbbmalloc.dll |
-            Where-Object { $_.FullName -notmatch 'debug' } |
-            Copy-Item -Destination dist\lib\ -Force
-
-      - name: Stage TBB redistributables (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          mkdir -p dist/lib
-          # Copy the real files and their SONAME symlinks, skipping the debug variants.
-          find "$TBB_ROOT" -name "libtbb*.so*" ! -path "*debug*" -exec cp -P {} dist/lib/ \;
-          ls -l dist/lib
 
       - uses: ./.github/actions/collect-package-upload
         with:
