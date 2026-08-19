@@ -88,8 +88,7 @@ jobs:
           cmake --build src/build --parallel
           cmake --install src/build
 
-      # slang is always linked dynamically, so the DLL CRT is the correct choice here
-      # (unlike our static libs, which use /MT).
+      # Static CRT even though this ships as a DLL, so sbox needs no VC redist.
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -97,7 +96,7 @@ jobs:
           cmake -S src -B src\build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
-            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
             -DSLANG_SLANG_LLVM_FLAVOR=DISABLE `
             -DSLANG_ENABLE_TESTS=OFF `
             -DSLANG_ENABLE_EXAMPLES=OFF `

@@ -93,18 +93,17 @@ jobs:
           done
 
       # Every -Dkey=value carrying a variable must be quoted, or PowerShell passes the
-      # literal '$crt' through to cmake instead of expanding it.
+      # literal name through to cmake instead of expanding it.
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           foreach ($shared in @('ON','OFF')) {
             $static = if ($shared -eq 'ON') { 'OFF' } else { 'ON' }
-            $crt    = if ($shared -eq 'ON') { 'MultiThreadedDLL' } else { 'MultiThreaded' }
             cmake -S src -B "src\build-$shared" -G Ninja `
               -DCMAKE_BUILD_TYPE=Release `
               -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\dist" `
-              "-DCMAKE_MSVC_RUNTIME_LIBRARY=$crt" `
+              -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
               "-DBUILD_SHARED_LIBS=$shared" `
               "-DSDL_SHARED=$shared" "-DSDL_STATIC=$static" `
               -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_INSTALL_TESTS=OFF
