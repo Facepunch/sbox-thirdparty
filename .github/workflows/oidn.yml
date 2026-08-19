@@ -109,7 +109,6 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$root" `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
-            "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW" `
             -DBUILD_SHARED_LIBS=OFF `
             -DTBB_TEST=OFF -DTBB_EXAMPLES=OFF -DTBB_STRICT=OFF
           cmake --build tbb_src/build --parallel
@@ -150,6 +149,7 @@ jobs:
             -DISPC_EXECUTABLE="$env:ISPC_EXECUTABLE" `
             -DTBB_ROOT="$env:TBB_ROOT" `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW" `
             -DOIDN_STATIC_LIB=OFF `
             -DOIDN_APPS=OFF
           cmake --build src\build --parallel
