@@ -185,7 +185,6 @@ jobs:
           sudo apt-get install -y build-essential libgl1-mesa-dev libfontconfig1-dev             libfreetype-dev libx11-dev libx11-xcb-dev libxext-dev libxfixes-dev             libxi-dev libxrender-dev libxcb1-dev libxcb-glx0-dev libxcb-keysyms1-dev             libxcb-image0-dev libxcb-shm0-dev libxcb-icccm4-dev libxcb-sync-dev             libxcb-xfixes0-dev libxcb-shape0-dev libxcb-randr0-dev             libxcb-render-util0-dev libxcb-util-dev libxcb-xinerama0-dev             libxcb-xkb-dev libxkbcommon-dev libxkbcommon-x11-dev libdbus-1-dev patchelf
 
       - name: Clone Facepunch/qt ${{ needs.setup.outputs.lib_version }}
-        if: runner.os == 'Linux'
         uses: actions/checkout@v4
         with:
           repository: Facepunch/qt
@@ -195,16 +194,6 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      # The fork does not build on macOS: upstream qtbase plus its changes as a patch, into
-      # qt/valve so every step below is shared.
-      - name: Clone and configure Qt
-        if: runner.os == 'macOS'
-        run: |
-          git clone --depth 1 --branch v5.15.19-lts-lgpl https://github.com/qt/qtbase.git qt/valve
-          cd qt/valve
-          patch -p1 --forward --batch < "$GITHUB_WORKSPACE/.github/patches/qt5/sbox.patch"
-          ./configure -prefix "$PWD/build_linux64" -opensource -confirm-license -release -force-debug-info -nomake examples -nomake tests -nomake tools -no-opengl -no-openssl -no-icu -no-framework
-
       # Mirrors valve/fp_config.bat, which is Windows only - same module skips and the
       # same -no-opengl/-no-openssl/-release choices, driven through the Unix configure.
       # -no-icu is added on top: configure would otherwise auto-detect whatever ICU the build
@@ -212,7 +201,6 @@ jobs:
       # is a version gamble on any machine the result lands on. -no-icu makes Qt use its
       # built-in Unicode tables instead, so the shipped libraries are self-contained.
       - name: Configure
-        if: runner.os == 'Linux'
         working-directory: qt/valve
         run: |
           # The checkout does not preserve exec bits, and the top level configure
@@ -220,7 +208,7 @@ jobs:
           chmod +x configure qtbase/configure 2>/dev/null || true
           find . -maxdepth 4 -name configure -type f -exec chmod +x {} + 2>/dev/null || true
           find . -maxdepth 4 -path '*config.tests*' -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
-          ./configure             -prefix "$PWD/build_linux64"             -opensource -confirm-license             -release -force-debug-info             -nomake examples -nomake tests -nomake tools             -no-opengl -no-openssl -no-icu             -skip 3d -skip activeqt -skip androidextras -skip charts             -skip connectivity -skip datavis3d -skip declarative -skip doc             -skip gamepad -skip graphicaleffects -skip location -skip lottie             -skip macextras -skip multimedia -skip networkauth -skip purchasing             -skip quick3d -skip quickcontrols -skip quickcontrols2             -skip quicktimeline -skip remoteobjects -skip script -skip scxml             -skip sensors -skip serialbus -skip serialport -skip speech             -skip svg -skip translations -skip virtualkeyboard -skip wayland             -skip webchannel -skip webengine -skip webglplugin -skip websockets             -skip webview -skip x11extras -skip xmlpatterns
+          ./configure             -prefix "$PWD/build_linux64"             -opensource -confirm-license             -release -force-debug-info             -nomake examples -nomake tests -nomake tools             -no-opengl -no-openssl -no-icu             $([ "$RUNNER_OS" = macOS ] && echo -no-framework)             -skip 3d -skip activeqt -skip androidextras -skip charts             -skip connectivity -skip datavis3d -skip declarative -skip doc             -skip gamepad -skip graphicaleffects -skip location -skip lottie             -skip macextras -skip multimedia -skip networkauth -skip purchasing             -skip quick3d -skip quickcontrols -skip quickcontrols2             -skip quicktimeline -skip remoteobjects -skip script -skip scxml             -skip sensors -skip serialbus -skip serialport -skip speech             -skip svg -skip translations -skip virtualkeyboard -skip wayland             -skip webchannel -skip webengine -skip webglplugin -skip websockets             -skip webview -skip x11extras -skip xmlpatterns
 
       - name: Build
         working-directory: qt/valve
@@ -229,16 +217,6 @@ jobs:
       - name: Install
         working-directory: qt/valve
         run: make install
-
-      # The fork bundles these, upstream qtbase does not; sbox needs QtUiTools and the image plugins.
-      - name: Build qttools and qtimageformats
-        if: runner.os == 'macOS'
-        run: |
-          qmake="$GITHUB_WORKSPACE/qt/valve/build_linux64/bin/qmake"
-          git clone --depth 1 --branch v5.15.19-lts-lgpl https://github.com/qt/qttools.git qttools
-          git clone --depth 1 --branch v5.15.19-lts-lgpl https://github.com/qt/qtimageformats.git qtimageformats
-          (cd qttools/src/designer/src && "$qmake" && make sub-uiplugin sub-uitools -j"$(sysctl -n hw.ncpu)" && make sub-uiplugin-install_subtargets sub-uitools-install_subtargets)
-          (cd qtimageformats && "$qmake" && make -j"$(sysctl -n hw.ncpu)" && make install)
 
       - name: Stage dist
         working-directory: qt/valve
