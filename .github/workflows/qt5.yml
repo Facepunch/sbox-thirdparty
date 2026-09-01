@@ -145,6 +145,11 @@ jobs:
 
   build-linux:
     needs: setup
+    # Container jobs default to sh (dash on sniper). Stage dist uses nullglob and brace
+    # expansion; without bash, linuxsteamrt64 dies at `shopt: not found`.
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
