@@ -4,8 +4,8 @@ name: Build ispc_texcomp
 # its Makefile.linux / ispc_texcomp.vcxproj: compile the two .ispc kernels for sse2+avx,
 # compile the two .cpp wrappers, link a shared library.
 #
-# Only win64 and linuxsteamrt64 are built - the kernels are x86-only (sse2/avx), and
-# Source 2 only loads ispc_texcomp on Windows today (src/bitmap/ispc_compressor_loader.cpp).
+# x86 builds the kernels for sse2+avx, ARM for neon. Source 2 only loads ispc_texcomp on
+# Windows today (src/bitmap/ispc_compressor_loader.cpp); the other platforms let that change.
 #
 # The vendored copy in sbox also carries a Valve-added crtoverride.cpp. It is inert - the
 # whole file sits behind #if defined( USE_VCRT ), which the vcxproj never defines - so it

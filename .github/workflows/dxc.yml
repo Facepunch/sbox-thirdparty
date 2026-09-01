@@ -124,7 +124,9 @@ jobs:
           mkdir -p dist/include/dxc dist/lib dist/bin
           cp src/include/dxc/*.h dist/include/dxc/ 2>/dev/null || true
           cp -r src/include/dxc/Support dist/include/dxc/ 2>/dev/null || true
-          find src/build/lib src/build/bin -maxdepth 1 \( -name "libdxcompiler.so*" -o -name "libdxcompiler.dylib" \) -exec cp {} dist/lib/ \;
+          test -f dist/include/dxc/dxcapi.h
+          find src/build/lib src/build/bin -maxdepth 1 \( -name "libdxcompiler.so*" -o -name "libdxcompiler*.dylib" \) -exec cp {} dist/lib/ \;
+          ls dist/lib/libdxcompiler* >/dev/null
           # sbox regenerates its built-in shaders with the dxc driver, which has to be the
           # same build as the library beside it, so it ships here rather than being found.
           find src/build/bin -maxdepth 1 -name dxc -exec cp {} dist/bin/ \;
@@ -139,6 +141,7 @@ jobs:
           if ( Test-Path src\include\dxc\Support ) { Copy-Item -Recurse -Force src\include\dxc\Support dist\include\dxc\ }
           if ( -not ( Test-Path dist\include\dxc\dxcapi.h ) ) { throw "dxcapi.h missing from staged headers" }
           Get-ChildItem src\build -Recurse -Include dxcompiler.dll,dxcompiler.lib | Copy-Item -Destination dist\lib\
+          if ( -not ( Test-Path dist\lib\dxcompiler.dll ) ) { throw "dxcompiler.dll missing from the staged output" }
 
           # sbox regenerates its built-in shaders with the dxc driver, which has to be the
           # same build as the library beside it, so it ships here rather than being found.

@@ -5,6 +5,10 @@ name: Build oidn
 # Stay on 1.4.x: it keeps the oidn 1.x C API (oidnNewDevice / oidnNewFilter /
 # oidnSetSharedFilterImage / oidnExecute) that vrad3 calls. 2.x reworks the device model.
 #
+# No linuxsteamrtarm64: 1.4.x picks a neural runtime only for x64 (DNNL) or Apple ARM64
+# (BNNS), so cmake aborts on Linux aarch64 with an empty OIDN_NEURAL_RUNTIMES list.
+# Covering it needs 2.x, which is the API change above.
+#
 # ISPC comes from its own prebuilt release. TBB is built from source and linked statically,
 # because the official binaries import an appcontainer CRT that desktop Windows lacks.
 

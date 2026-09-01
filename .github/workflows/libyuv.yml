@@ -66,8 +66,11 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ninja
 
+      # clone + checkout rather than --branch, so a commit SHA works as well as a branch.
       - name: Clone libyuv ${{ needs.setup.outputs.lib_version }}
-        run: git clone --depth 1 https://chromium.googlesource.com/libyuv/libyuv src
+        run: |
+          git clone https://chromium.googlesource.com/libyuv/libyuv src
+          git -C src checkout ${{ needs.setup.outputs.lib_version }}
 
       - name: Build (Unix)
         if: runner.os != 'Windows'
