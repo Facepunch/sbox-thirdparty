@@ -189,9 +189,11 @@ jobs:
           }
 
       # ── macOS ─────────────────────────────────────────────────────────────
-      # Build static libcurl backed by SecureTransport (Apple native TLS).
-      # Consumers must also link the Security and CoreFoundation frameworks
-      # (handled in the sbox VPC).
+      # Static libcurl on Secure Transport, the TLS that ships with macOS, so nothing to bundle.
+      # Consumers link the Security framework (Osx.cs does). The option is CURL_USE_SECTRANSP;
+      # spelled any other way cmake ignores it and falls back to OpenSSL, which the runner has
+      # from homebrew - that is how the previous package came to need libssl.a it never shipped.
+      # libssh2, brotli and zstd are off by name for the same reason.
       - name: Build (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -202,7 +204,11 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -DBUILD_TESTING=OFF \
             -DCURL_STATICLIB=ON \
-            -DCURL_USE_SECURE_TRANSPORT=ON \
+            -DCURL_USE_SECTRANSP=ON \
+            -DCURL_USE_OPENSSL=OFF \
+            -DCURL_USE_LIBSSH2=OFF \
+            -DCURL_BROTLI=OFF \
+            -DCURL_ZSTD=OFF \
             -DCURL_DISABLE_LDAP=ON \
             -DCURL_DISABLE_SMTP=ON \
             -DCURL_DISABLE_IMAP=ON \
