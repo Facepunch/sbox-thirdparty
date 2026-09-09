@@ -32,7 +32,6 @@ jobs:
           echo "lib_version=$V" >> $GITHUB_OUTPUT
           echo "release_tag=embree-$V" >> $GITHUB_OUTPUT
 
-  # No aarch64: 3.13.x's vendored sse2neon.h/avx2neon.h do not compile on GCC 13+.
   build:
     needs: setup
     strategy:
@@ -41,6 +40,8 @@ jobs:
         include:
           - { os: windows-latest, platform: win64 }
           - { os: ubuntu-24.04,   platform: linuxsteamrt64, container: 'registry.gitlab.steamos.cloud/steamrt/sniper/sdk:3.0.20260805.254768' }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
     name: ${{ matrix.platform }}
@@ -78,18 +79,28 @@ jobs:
       # Do not trim the lower ISAs with the individual EMBREE_ISA_* switches. Making AVX the
       # lowest makes it the base ISA too, so the core kernels land in embree3 already
       # namespaced embree::avx and collide with embree_avx when the libraries are merged.
+      # On ARM, EMBREE_ARM must be a cache var (auto-detection runs after the compiler cmake
+      # files read it) and sse2neon.h needs -flax-vector-conversions on GCC 13+, hence the IGNORE
+      # opt-out that stops those files blanking CMAKE_CXX_FLAGS.
       - name: Select ISA flags
         id: isa
         shell: bash
-        run: echo "flags=-DEMBREE_MAX_ISA=AVX2 -DEMBREE_ISA_AVX512=OFF" >> $GITHUB_OUTPUT
+        run: echo "flags=$([[ '${{ matrix.platform }}' == *arm64 ]] && echo -DEMBREE_ARM:BOOL=ON -DEMBREE_IGNORE_CMAKE_CXX_FLAGS:BOOL=OFF -DCMAKE_CXX_FLAGS=-flax-vector-conversions || echo -DEMBREE_MAX_ISA=AVX2 -DEMBREE_ISA_AVX512=OFF)" >> $GITHUB_OUTPUT
 
       - name: Build (Unix)
         if: runner.os != 'Windows'
         run: |
+          # Apple clang rejects two NEON-path headers (bad union members, ostream on a field
+          # without one) and sse2neon's _mm_stream_pd, which stores through the wrong vector type.
+          # Applied on both ARM platforms so they build the same source; GCC never compiles the
+          # _mm_stream_pd builtin branch and v0/v1 name the same members u.lower/u.upper alias.
+          [[ "${{ matrix.platform }}" != *arm64 ]] || sed -i.bak -e 's/a\.u\.lower/a.v0/g' -e 's/a\.u\.upper/a.v1/g' -e 's/line\.v0 << ", " << //' src/kernels/subdiv/bezier_curve.h src/kernels/geometry/pointi.h
+          [[ "${{ matrix.platform }}" != *arm64 ]] || sed -i.bak '/_mm_stream_pd/,/^}/s/(float32x4_t \*) p/(float64x2_t *) p/' src/common/simd/arm/sse2neon.h
           cmake -S src -B src/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DEMBREE_STATIC_LIB=ON \
             -DEMBREE_ISPC_SUPPORT=OFF \
             -DEMBREE_TASKING_SYSTEM=INTERNAL \
@@ -157,9 +168,11 @@ jobs:
           count=$(ls *.a | wc -l)
           if [ "$count" -lt 2 ]; then echo "expected several embree libs to merge, found $count"; exit 1; fi
           merged="$GITHUB_WORKSPACE/libembree3_merged.a"
+          if [ "$RUNNER_OS" = macOS ]; then libtool -static -o "$merged" *.a; else
           { echo "create $merged"
             for a in *.a; do echo "addlib $a"; done
             echo "save"; echo "end"; } | ar -M
+          fi
           rm -f *.a
           mv "$merged" libembree3.a
           # --defined-only, or an undefined reference to the symbol satisfies the check.

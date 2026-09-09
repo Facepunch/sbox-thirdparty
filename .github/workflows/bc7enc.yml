@@ -8,8 +8,8 @@ name: Build bc7enc
 # in tree would put an ISPC toolchain on every developer machine. The upstream repo bundles
 # a 39 MB ispc.exe for that reason; we fetch a pinned release instead.
 #
-# win64 + linuxsteamrt64: sbox only compiles the loader on Windows today
-# (src/bitmap/bitmap.build.cs excludes it on Linux) but the Linux binary lets that change.
+# sbox only compiles the loader on Windows today (src/bitmap/bitmap.build.cs excludes it
+# on Linux) but the other platforms' binaries let that change.
 
 on:
   workflow_dispatch:
@@ -54,6 +54,8 @@ jobs:
         include:
           - { os: windows-latest, platform: win64 }
           - { os: ubuntu-24.04,   platform: linuxsteamrt64, container: 'registry.gitlab.steamos.cloud/steamrt/sniper/sdk:3.0.20260805.254768' }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
     name: ${{ matrix.platform }}
@@ -80,11 +82,12 @@ jobs:
           git clone https://github.com/BinomialLLC/bc7e src
           git -C src checkout ${{ needs.setup.outputs.lib_version }}
 
-      - name: Install ISPC ${{ needs.setup.outputs.ispc_version }} (Linux)
-        if: runner.os == 'Linux'
+      - name: Install ISPC ${{ needs.setup.outputs.ispc_version }} (Unix)
+        if: runner.os != 'Windows'
         run: |
           V="${{ needs.setup.outputs.ispc_version }}"
-          curl -fsSL -o ispc.tar.gz "https://github.com/ispc/ispc/releases/download/$V/ispc-$V-linux.tar.gz"
+          case "${{ matrix.platform }}" in osxarm64) a=macOS.arm64;; *arm64) a=linux.aarch64;; *) a=linux;; esac
+          curl -fsSL -o ispc.tar.gz "https://github.com/ispc/ispc/releases/download/$V/ispc-$V-$a.tar.gz"
           mkdir -p ispc && tar xzf ispc.tar.gz -C ispc --strip-components=1
           echo "$GITHUB_WORKSPACE/ispc/bin" >> $GITHUB_PATH
 
@@ -101,20 +104,24 @@ jobs:
       # sse2,sse4,avx,avx2 matches the target set the shipped bc7enc.dll dispatches;
       # dropping sse4 would send SSE4-only CPUs down the SSE2 path. The generated header
       # declares the ispc:: namespace the shim includes.
-      - name: Build (Linux)
-        if: runner.os == 'Linux'
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
         run: |
           cd src
-          ispc -O2 --arch=x86-64 --target=sse2,sse4,avx,avx2 --opt=fast-math --pic \
+          # --no-undefined: the per-target objects come from a glob, so make a missing one fail
+          # the link, not the customer's dlopen. macOS ld already errors on undefined symbols.
+          arch=x86-64; tgt=sse2,sse4,avx,avx2; so=libbc7enc.so; ld=-Wl,--no-undefined; nmf="-D --defined-only"
+          [[ "${{ matrix.platform }}" == *arm64 ]] && { arch=aarch64; tgt=neon-i32x8; }
+          [ "$RUNNER_OS" = macOS ] && { so=libbc7enc.dylib; ld="-Wl,-install_name,@rpath/$so"; nmf=-gU; }
+          ispc -O2 --arch=$arch --target=$tgt --opt=fast-math --pic \
             -o bc7e_ispc.o -h bc7e_ispc.h bc7e.ispc
           g++ -O2 -fPIC -fvisibility=hidden -I. -c "$GITHUB_WORKSPACE/shims/bc7enc/bc7enc_shim.cpp" -o bc7enc_shim.o
           mkdir -p "$GITHUB_WORKSPACE/dist/lib" "$GITHUB_WORKSPACE/dist/include"
           # ISPC generates this header; ship it so the archive documents the params
           # struct, and because collect-package-upload requires a dist/include.
           cp bc7e_ispc.h "$GITHUB_WORKSPACE/dist/include/"
-          g++ -shared -o "$GITHUB_WORKSPACE/dist/lib/libbc7enc.so" \
-            bc7enc_shim.o bc7e_ispc.o bc7e_ispc_sse2.o bc7e_ispc_sse4.o bc7e_ispc_avx.o bc7e_ispc_avx2.o
-          nm -D --defined-only "$GITHUB_WORKSPACE/dist/lib/libbc7enc.so" | grep -q InitalizeModule
+          g++ -shared $ld -o "$GITHUB_WORKSPACE/dist/lib/$so" bc7enc_shim.o bc7e_ispc*.o
+          nm $nmf "$GITHUB_WORKSPACE/dist/lib/$so" | grep -q InitalizeModule
 
       # /MD: this ships as a DLL loaded at runtime, so it owns its own CRT.
       - name: Build (Windows)

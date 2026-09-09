@@ -3,9 +3,9 @@ name: Build Compressonator
 # Builds the Compressonator SDK static libs (CMP_Core + CMP_Compressonator), which export the
 # CMP_* API - CMP_ConvertTexture / CMP_CalculateBufferSize and the BC6H/BC7 block encoders.
 #
-# Only win64 and linuxsteamrt64 are built. Upstream compiles CMP_Core_SSE/AVX/AVX512
+# Upstream compiles CMP_Core_SSE/AVX/AVX512
 # unconditionally with -march=nehalem/haswell/knl on Unix and /arch:AVX2 on Windows, with no
-# architecture guard, so an aarch64 toolchain rejects the configure outright. Source 2 also
+# architecture guard, so on aarch64 those three are stubbed out. Source 2 also
 # only compiles its texture-compression loaders on Windows (src/bitmap/bitmap.build.cs excludes
 # ati_compress_loader.cpp and ispc_compressor_loader.cpp on Linux).
 
@@ -44,6 +44,8 @@ jobs:
         include:
           - { os: windows-latest, platform: win64 }
           - { os: ubuntu-24.04,   platform: linuxsteamrt64, container: 'registry.gitlab.steamos.cloud/steamrt/sniper/sdk:3.0.20260805.254768' }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
     name: ${{ matrix.platform }}
@@ -69,15 +71,28 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build
 
+      - name: Install ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
       - name: Clone Compressonator ${{ needs.setup.outputs.lib_version }}
         run: git clone --depth 1 --branch ${{ needs.setup.outputs.lib_version }} https://github.com/GPUOpen-Tools/compressonator src
+
+      - name: Skip x86 SIMD on ARM
+        if: contains(matrix.platform, 'arm64')
+        run: |
+          python3 -c 'p="src/cmp_core/CMakeLists.txt"; t=open(p).read().replace("# Core SIMD options","if (CMAKE_SYSTEM_PROCESSOR MATCHES \"x86_64|AMD64\")\n# Core SIMD options",1); open(p,"w").write(t+"\nendif()\ntarget_sources(CMP_Core PRIVATE source/core_simd_stub.cpp)\n")'
+          printf '%s\n' '#include "core_simd.h"' 'float sse_bc1ComputeBestEndpoints(float*,float*,float*,float*,float*,int,int){return 0;}' 'float avx_bc1ComputeBestEndpoints(float*,float*,float*,float*,float*,int,int){return 0;}' 'float avx512_bc1ComputeBestEndpoints(float*,float*,float*,float*,float*,int,int){return 0;}' > src/cmp_core/source/core_simd_stub.cpp
+          # On macOS GetCPUID is a no-op (only _WIN32 has an implementation, only __linux__ skips
+          # the probe), leaving cpuInfo uninitialized - garbage could enable the stubs above.
+          sed -i.bak 's/int cpuInfo\[4\];/int cpuInfo[4] = {};/' src/applications/_libs/cmp_math/cpu_extensions.cpp
 
       # OPTION_BUILD_INTERNAL_CMP_TEST defaults to ON and adds compressonator_internal/, a tree
       # that does not exist in the public repo, so leaving it on breaks the configure.
       # OPTION_BUILD_CMP_SDK also drags in the imageio and gpu_decode subdirectories; they are
       # configured but never compiled because only the two library targets below are built.
-      - name: Build (Linux)
-        if: runner.os == 'Linux'
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
         run: |
           cmake -S src -B src/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -137,8 +152,8 @@ jobs:
       # Compressonator declares no install() rules at all, so stage the dist/ layout the collect
       # action expects by hand. cmp_core exports both source/ and shaders/ as public include
       # directories, so both are flattened into include/ the way consumers see them.
-      - name: Stage dist (Linux)
-        if: runner.os == 'Linux'
+      - name: Stage dist (Unix)
+        if: runner.os != 'Windows'
         run: |
           mkdir -p dist/include dist/lib
           cp src/cmp_compressonatorlib/compressonator.h dist/include/

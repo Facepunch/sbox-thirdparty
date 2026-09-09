@@ -5,8 +5,9 @@ name: Build oidn
 # Stay on 1.4.x: it keeps the oidn 1.x C API (oidnNewDevice / oidnNewFilter /
 # oidnSetSharedFilterImage / oidnExecute) that vrad3 calls. 2.x reworks the device model.
 #
-# No aarch64: 1.x's ISPC kernels only have SSE/AVX targets, so there is nothing to compile
-# for NEON. That needs 2.x, which is the API change above.
+# No linuxsteamrtarm64: 1.4.x picks a neural runtime only for x64 (DNNL) or Apple ARM64
+# (BNNS), so cmake aborts on Linux aarch64 with an empty OIDN_NEURAL_RUNTIMES list.
+# Covering it needs 2.x, which is the API change above.
 #
 # ISPC comes from its own prebuilt release. TBB is built from source and linked statically,
 # because the official binaries import an appcontainer CRT that desktop Windows lacks.
@@ -60,6 +61,7 @@ jobs:
         include:
           - { os: windows-latest, platform: win64 }
           - { os: ubuntu-24.04,   platform: linuxsteamrt64, container: 'registry.gitlab.steamos.cloud/steamrt/sniper/sdk:3.0.20260805.254768' }
+          - { os: macos-26,       platform: osxarm64 }
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
     name: ${{ matrix.platform }}
@@ -85,6 +87,10 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build
 
+      - name: Install ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
       # setup-python resolves its download against the runner's distro and publishes no build
       # for steamrt, so it is skipped inside the container. sniper ships Python 3.9 as both
       # python and python3, which is what these build scripts want it for.
@@ -104,11 +110,12 @@ jobs:
           if (-not $exe) { throw "ispc.exe not found in release archive" }
           Add-Content -Path $env:GITHUB_ENV -Value "ISPC_EXECUTABLE=$exe"
 
-      - name: Install ISPC ${{ needs.setup.outputs.ispc_version }} (Linux)
-        if: runner.os == 'Linux'
+      - name: Install ISPC ${{ needs.setup.outputs.ispc_version }} (Unix)
+        if: runner.os != 'Windows'
         run: |
           v="${{ needs.setup.outputs.ispc_version }}"
-          curl -sSL -o ispc.tar.gz "https://github.com/ispc/ispc/releases/download/$v/ispc-$v-linux.tar.gz"
+          a=linux.tar.gz; [ "$RUNNER_OS" = macOS ] && a=macOS.arm64.tar.gz
+          curl -sSL -o ispc.tar.gz "https://github.com/ispc/ispc/releases/download/$v/ispc-$v-$a"
           mkdir -p ispc_dl && tar -xzf ispc.tar.gz -C ispc_dl
           exe=$(find ispc_dl -type f -name ispc -perm -u+x | head -1)
           if [ -z "$exe" ]; then echo "ispc not found in release archive"; exit 1; fi
@@ -133,8 +140,8 @@ jobs:
           if (-not (Test-Path "$root/lib/tbb.lib")) { throw "no tbb.lib in $root/lib" }
           Add-Content -Path $env:GITHUB_ENV -Value "TBB_ROOT=$root"
 
-      - name: Build oneTBB ${{ needs.setup.outputs.tbb_version }} (Linux)
-        if: runner.os == 'Linux'
+      - name: Build oneTBB ${{ needs.setup.outputs.tbb_version }} (Unix)
+        if: runner.os != 'Windows'
         run: |
           v="${{ needs.setup.outputs.tbb_version }}"
           root="$GITHUB_WORKSPACE/tbb"
@@ -171,8 +178,8 @@ jobs:
           cmake --build src\build --parallel
           cmake --install src\build
 
-      - name: Build (Linux)
-        if: runner.os == 'Linux'
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
         run: |
           cmake -S src -B src/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \

@@ -145,17 +145,30 @@ jobs:
 
   build-linux:
     needs: setup
-    runs-on: ubuntu-24.04
-    # Built inside the Steam Runtime 3 (sniper) SDK so the shipped Qt only needs symbols the
-    # runtime has. On a bare ubuntu-24.04 runner it picked up that host's glibc and libstdc++.
-    container: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:3.0.20260805.254768
-    name: linuxsteamrt64
+    # Container jobs default to sh (dash on sniper). Stage dist uses nullglob and brace
+    # expansion; without bash, linuxsteamrt64 dies at `shopt: not found`.
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # linuxsteamrt64 builds inside the Steam Runtime 3 (sniper) SDK so the shipped Qt only
+          # needs symbols the runtime has. On a bare runner it picked up the host's glibc.
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64, container: 'registry.gitlab.steamos.cloud/steamrt/sniper/sdk:3.0.20260805.254768' }
+          - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
+          - { os: macos-26,         platform: osxarm64 }
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    name: ${{ matrix.platform }}
     timeout-minutes: 300
 
     steps:
       # The image runs as root and carries neither sudo nor git-lfs; the Facepunch/qt checkout
       # below is an LFS repo and the dep step calls sudo.
       - name: Prepare Steam Runtime container
+        if: matrix.container != ''
         shell: bash
         run: |
           apt-get update -qq
@@ -166,6 +179,7 @@ jobs:
       # Qt needs the X11/xcb/fontconfig development headers to build the platform plugin.
       # Without them configure silently drops xcb and the result cannot open a window.
       - name: Install build deps
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y build-essential libgl1-mesa-dev libfontconfig1-dev             libfreetype-dev libx11-dev libx11-xcb-dev libxext-dev libxfixes-dev             libxi-dev libxrender-dev libxcb1-dev libxcb-glx0-dev libxcb-keysyms1-dev             libxcb-image0-dev libxcb-shm0-dev libxcb-icccm4-dev libxcb-sync-dev             libxcb-xfixes0-dev libxcb-shape0-dev libxcb-randr0-dev             libxcb-render-util0-dev libxcb-util-dev libxcb-xinerama0-dev             libxcb-xkb-dev libxkbcommon-dev libxkbcommon-x11-dev libdbus-1-dev patchelf
@@ -194,11 +208,11 @@ jobs:
           chmod +x configure qtbase/configure 2>/dev/null || true
           find . -maxdepth 4 -name configure -type f -exec chmod +x {} + 2>/dev/null || true
           find . -maxdepth 4 -path '*config.tests*' -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
-          ./configure             -prefix "$PWD/build_linux64"             -opensource -confirm-license             -release -force-debug-info             -nomake examples -nomake tests -nomake tools             -no-opengl -no-openssl -no-icu             -skip 3d -skip activeqt -skip androidextras -skip charts             -skip connectivity -skip datavis3d -skip declarative -skip doc             -skip gamepad -skip graphicaleffects -skip location -skip lottie             -skip macextras -skip multimedia -skip networkauth -skip purchasing             -skip quick3d -skip quickcontrols -skip quickcontrols2             -skip quicktimeline -skip remoteobjects -skip script -skip scxml             -skip sensors -skip serialbus -skip serialport -skip speech             -skip svg -skip translations -skip virtualkeyboard -skip wayland             -skip webchannel -skip webengine -skip webglplugin -skip websockets             -skip webview -skip x11extras -skip xmlpatterns
+          ./configure             -prefix "$PWD/build_linux64"             -opensource -confirm-license             -release -force-debug-info             -nomake examples -nomake tests -nomake tools             -no-opengl -no-openssl -no-icu             $([ "$RUNNER_OS" = macOS ] && echo -no-framework)             -skip 3d -skip activeqt -skip androidextras -skip charts             -skip connectivity -skip datavis3d -skip declarative -skip doc             -skip gamepad -skip graphicaleffects -skip location -skip lottie             -skip macextras -skip multimedia -skip networkauth -skip purchasing             -skip quick3d -skip quickcontrols -skip quickcontrols2             -skip quicktimeline -skip remoteobjects -skip script -skip scxml             -skip sensors -skip serialbus -skip serialport -skip speech             -skip svg -skip translations -skip virtualkeyboard -skip wayland             -skip webchannel -skip webengine -skip webglplugin -skip websockets             -skip webview -skip x11extras -skip xmlpatterns
 
       - name: Build
         working-directory: qt/valve
-        run: make -j"$(nproc)"
+        run: make -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu)"
 
       - name: Install
         working-directory: qt/valve
@@ -216,11 +230,12 @@ jobs:
           for m in QtCore QtGui QtWidgets QtConcurrent QtNetwork QtUiTools; do
             if [ -d "$build/include/$m" ]; then
               cp -r "$build/include/$m" "$out/include/"
-              rm -rf "$out/include/$m"/5.15.2*
+              rm -rf "$out/include/$m"/5.15.*
             fi
           done
 
           cp -a "$build"/lib/libQt5*.so* "$out/lib/" 2>/dev/null || true
+          cp -a "$build"/lib/libQt5*.dylib "$out/lib/" 2>/dev/null || true
           cp -a "$build"/lib/libQt5*.a "$out/lib/" 2>/dev/null || true
           for tool in moc rcc uic; do
             [ -f "$build/bin/$tool" ] && cp "$build/bin/$tool" "$out/bin/"
@@ -237,13 +252,14 @@ jobs:
           # and neither is a direct sbox dependency - miss them and the plugin fails to load with
           # "could not load the Qt platform plugin xcb".
           mkdir -p "$out/runtime/qt5_plugins/imageformats" "$out/runtime/qt5_plugins/platforms"
-          for m in Concurrent Core DBus Gui Widgets XcbQpa; do
-            cp -a "$out"/lib/libQt5$m.so* "$out/runtime/"
+          for m in Concurrent Core DBus Gui Widgets XcbQpa $([ "$RUNNER_OS" = macOS ] && echo PrintSupport); do # libqcocoa needs it
+            cp -a "$out"/lib/libQt5$m.so* "$out"/lib/libQt5$m*.dylib "$out/runtime/" 2>/dev/null || true
           done
           for p in qgif qjpeg qwbmp; do
             cp -a "$out/plugins/imageformats/lib$p.so" "$out/runtime/qt5_plugins/imageformats/" 2>/dev/null || true
+            cp -a "$out/plugins/imageformats/lib$p.dylib" "$out/runtime/qt5_plugins/imageformats/" 2>/dev/null || true
           done
-          cp -a "$out/plugins/platforms/libqxcb.so" "$out/runtime/qt5_plugins/platforms/"
+          cp -a "$out"/plugins/platforms/libq{xcb.so,cocoa.dylib} "$out/runtime/qt5_plugins/platforms/" 2>/dev/null || true
 
           # Qt links its plugins with RUNPATH $ORIGIN/../../lib, for its usual prefix/lib +
           # prefix/plugins/<category> layout. runtime/ is flattened - the Qt libraries sit at its
@@ -253,21 +269,29 @@ jobs:
           # are two directories up. (libQt5XcbQpa keeps its own $ORIGIN rpath, already correct once
           # it sits at the root.) This is the same $ORIGIN-relative patchelf that linuxdeployqt and
           # cqtdeployer apply when they bundle Qt.
+          # Same on macOS, minus the modules: Qt already gives those @rpath install names and an
+          # @loader_path rpath. nullglob: on either OS one of these two globs matches nothing.
+          shopt -s nullglob
           for plugin in "$out"/runtime/qt5_plugins/*/*.so; do
             patchelf --set-rpath '$ORIGIN/../..' "$plugin"
           done
+          for plugin in "$out"/runtime/qt5_plugins/*/*.dylib; do
+            install_name_tool -add_rpath "@loader_path/../.." "$plugin"
+          done
 
-          ls "$out/runtime" | grep -q "libQt5Core" || { echo "runtime libQt5Core missing"; exit 1; }
-          ls "$out/runtime" | grep -q "libQt5XcbQpa" || { echo "runtime libQt5XcbQpa missing"; exit 1; }
-          [ -f "$out/runtime/qt5_plugins/platforms/libqxcb.so" ] || { echo "runtime libqxcb.so missing"; exit 1; }
+          # The copies above tolerate the other OS's glob missing; catch a genuinely absent module here.
+          ls "$out/runtime/qt5_plugins/platforms" | grep -qE 'qxcb|qcocoa' || { echo "runtime platform plugin missing"; exit 1; }
+          for m in Concurrent Core DBus Gui Widgets $([ "$RUNNER_OS" = macOS ] && echo PrintSupport || echo XcbQpa); do
+            ls "$out/runtime" | grep -q "libQt5$m\." || { echo "runtime libQt5$m missing"; exit 1; }
+          done
 
       - name: Package
-        run: tar czf "qt5-${{ needs.setup.outputs.lib_version }}-linuxsteamrt64.tar.gz" -C dist .
+        run: tar czf "qt5-${{ needs.setup.outputs.lib_version }}-${{ matrix.platform }}.tar.gz" -C dist .
 
       - uses: actions/upload-artifact@v4
         with:
-          name: qt5-linuxsteamrt64
-          path: qt5-${{ needs.setup.outputs.lib_version }}-linuxsteamrt64.tar.gz
+          name: qt5-${{ matrix.platform }}
+          path: qt5-${{ needs.setup.outputs.lib_version }}-${{ matrix.platform }}.tar.gz
 
   release:
     needs: [setup, build, build-linux]
