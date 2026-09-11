@@ -44,9 +44,15 @@ vendored in sbox and built there.
 | Identifier | Runner | Toolchain |
 |------------|--------|-----------|
 | `win64` | `windows-latest` | MSVC |
-| `linuxsteamrt64` | `ubuntu-24.04` | GCC |
+| `linuxsteamrt64` | `ubuntu-24.04` + Steam Runtime 4 SDK container | GCC |
 | `linuxsteamrtarm64` | `ubuntu-24.04-arm` | GCC |
 | `osxarm64` | `macos-26` | Clang |
+
+The x64 Linux workflows use the Debian 13-based Steam Runtime 4 SDK, pinned to
+`registry.gitlab.steamos.cloud/steamrt/steamrt4/sdk:4.0.20260805.254769`.
+Keep this pin aligned with sbox's Linux CI workflows. The artifact identifier remains
+`linuxsteamrt64`; newly built packages target Steam Runtime 4 and are not guaranteed to run
+under older runtimes. The ARM64 Linux builds use the Ubuntu runner directly.
 
 Most libraries build all four. The exceptions, and why:
 
@@ -66,6 +72,10 @@ git tag dav1d-1.5.3 && git push origin dav1d-1.5.3
 Each workflow publishes a release with `.zip` (Windows) and `.tar.gz` (Unix) archives
 containing `include/` and `lib/`. Re-running an existing version replaces its assets rather
 than failing.
+
+Changing the SDK image does not rebuild existing release assets. After publishing rebuilt
+packages under their existing tags, increment each affected dependency's `Rebuild` value in
+sbox's `engine/Tools/SboxBuild/Native/RemoteDeps.cs` so cached checkouts fetch the new binaries.
 
 ## Notes
 

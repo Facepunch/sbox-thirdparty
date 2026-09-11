@@ -145,7 +145,7 @@ jobs:
 
   build-linux:
     needs: setup
-    # Container jobs default to sh (dash on sniper). Stage dist uses nullglob and brace
+    # Container jobs default to sh. Stage dist uses nullglob and brace
     # expansion; without bash, linuxsteamrt64 dies at `shopt: not found`.
     defaults:
       run:
@@ -154,9 +154,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # linuxsteamrt64 builds inside the Steam Runtime 3 (sniper) SDK so the shipped Qt only
-          # needs symbols the runtime has. On a bare runner it picked up the host's glibc.
-          - { os: ubuntu-24.04,     platform: linuxsteamrt64, container: 'registry.gitlab.steamos.cloud/steamrt/sniper/sdk:3.0.20260805.254768' }
+          # Match sbox's Steam Runtime 4 SDK so Qt targets the same system ABI.
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64, container: 'registry.gitlab.steamos.cloud/steamrt/steamrt4/sdk:4.0.20260805.254769' }
           - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
           - { os: macos-26,         platform: osxarm64 }
     runs-on: ${{ matrix.os }}
@@ -165,13 +164,12 @@ jobs:
     timeout-minutes: 300
 
     steps:
-      # The image runs as root and carries neither sudo nor git-lfs; the Facepunch/qt checkout
-      # below is an LFS repo and the dep step calls sudo.
+      # Install Git LFS for the Facepunch/qt checkout and sudo for the dependency step.
       - name: Prepare Steam Runtime container
         if: matrix.container != ''
         shell: bash
         run: |
-          apt-get update -qq
+          apt-get -o APT::Update::Error-Mode=any update -qq
           apt-get install -y --no-install-recommends sudo git-lfs ca-certificates
 
       - uses: actions/checkout@v4

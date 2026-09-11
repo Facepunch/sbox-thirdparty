@@ -38,7 +38,7 @@ jobs:
       matrix:
         include:
           - { os: windows-latest,   platform: win64 }
-          - { os: ubuntu-24.04,     platform: linuxsteamrt64, container: 'registry.gitlab.steamos.cloud/steamrt/sniper/sdk:3.0.20260805.254768' }
+          - { os: ubuntu-24.04,     platform: linuxsteamrt64, container: 'registry.gitlab.steamos.cloud/steamrt/steamrt4/sdk:4.0.20260805.254769' }
           - { os: ubuntu-24.04-arm, platform: linuxsteamrtarm64 }
           - { os: macos-26,         platform: osxarm64 }
     runs-on: ${{ matrix.os }}
@@ -46,15 +46,13 @@ jobs:
     name: ${{ matrix.platform }}
 
     steps:
-      # linuxsteamrt64 builds run inside the Steam Runtime 3 (sniper) SDK so their output only
-      # needs symbols the runtime actually has. Building on ubuntu-latest instead is what left
-      # these libraries needing GLIBC_2.38 when sniper provides 2.31. The image carries neither
-      # sudo nor git-lfs, which actions/checkout and the dep steps below expect.
+      # Match sbox's Steam Runtime 4 SDK so libraries target the same system ABI.
+      # Install the tools required by checkout and the dependency steps below.
       - name: Prepare Steam Runtime container
         if: matrix.container != ''
         shell: bash
         run: |
-          apt-get update -qq
+          apt-get -o APT::Update::Error-Mode=any update -qq
           apt-get install -y --no-install-recommends sudo git-lfs ca-certificates
 
       - uses: actions/checkout@v4
@@ -74,9 +72,8 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ninja
 
-      # setup-python resolves its download against the runner's distro and publishes no build
-      # for steamrt, so it is skipped inside the container. sniper ships Python 3.9 as both
-      # python and python3, which is what these build scripts want it for.
+      # Use the SDK's Python 3.13 (python and python3) inside the container.
+      # setup-python supplies Python on the other runners.
       - uses: actions/setup-python@v5
         if: matrix.container == ''
         with:
