@@ -101,6 +101,8 @@ jobs:
       # carries their headers, so cmake would otherwise detect them and leave libcurl.a needing
       # libraries this package does not ship. CURL_ZLIB already rules out content decoding, so
       # these belong with it.
+      # Runtime 4 also carries libssh2 headers. Disable SSH explicitly so the static
+      # archive does not acquire an unshipped libssh2 dependency through auto-detection.
       # Static libcurl with the OpenSSL backend, linked against the OpenSSL built above and
       # shipped beside it. engine2.build.cs takes libssl and libcrypto out of
       # src/thirdparty/libcurl/lib/<plat>/ to match.
@@ -115,6 +117,7 @@ jobs:
             -DBUILD_TESTING=OFF \
             -DCURL_STATICLIB=ON \
             -DCURL_USE_OPENSSL=ON \
+            -DCURL_USE_LIBSSH2=OFF \
             -DOPENSSL_ROOT_DIR="$GITHUB_WORKSPACE/ossl-dist" \
             -DOPENSSL_USE_STATIC_LIBS=ON \
             -DCURL_DISABLE_LDAP=ON \
@@ -142,6 +145,21 @@ jobs:
           cp "$GITHUB_WORKSPACE/ossl-dist/lib/libssl.a" \
              "$GITHUB_WORKSPACE/ossl-dist/lib/libcrypto.a" \
              "$GITHUB_WORKSPACE/dist/lib/"
+
+      - name: Verify static curl linkage (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Link against only the libraries we ship, then exercise curl initialization.
+          # Building an archive alone does not catch missing transitive dependencies.
+          printf '%s\n' '#include <curl/curl.h>' \
+            'int main(void) { if (curl_global_init(CURL_GLOBAL_DEFAULT)) return 1; CURL *c = curl_easy_init(); if (!c) return 2; curl_easy_cleanup(c); curl_global_cleanup(); return 0; }' \
+            | cc -I "$GITHUB_WORKSPACE/dist/include" -x c - -x none \
+              "$GITHUB_WORKSPACE/dist/lib/libcurl.a" \
+              "$GITHUB_WORKSPACE/dist/lib/libssl.a" \
+              "$GITHUB_WORKSPACE/dist/lib/libcrypto.a" \
+              -ldl -pthread -o "$RUNNER_TEMP/curl-link-check"
+          "$RUNNER_TEMP/curl-link-check"
 
       # ── Windows ────────────────────────────────────────────────────────────
       # Build static libcurl backed by Windows Schannel - no extra DLLs needed.
