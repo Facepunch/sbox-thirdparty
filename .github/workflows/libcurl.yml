@@ -103,14 +103,15 @@ jobs:
       # these belong with it.
       # Runtime 4 also carries libssh2 headers. Disable SSH explicitly so the static
       # archive does not acquire an unshipped libssh2 dependency through auto-detection.
-      # FindOpenSSL can also set ZLIB_FOUND before curl checks CURL_ZLIB. Disable
-      # discovery itself so that does not silently re-enable content decoding.
+      # FindOpenSSL reads pkg-config metadata as well as OPENSSL_ROOT_DIR. Point both
+      # at our build so system OpenSSL's zlib dependency does not leak into curl.
       # Static libcurl with the OpenSSL backend, linked against the OpenSSL built above and
       # shipped beside it. engine2.build.cs takes libssl and libcrypto out of
       # src/thirdparty/libcurl/lib/<plat>/ to match.
       - name: Build (Linux)
         if: runner.os == 'Linux'
         run: |
+          export PKG_CONFIG_PATH="$GITHUB_WORKSPACE/ossl-dist/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
           cmake -S src -B src/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/dist" \
@@ -134,7 +135,6 @@ jobs:
             -DCURL_DISABLE_MQTT=ON \
             -DCURL_DISABLE_FILE=ON \
             -DCURL_ZLIB=OFF \
-            -DCMAKE_DISABLE_FIND_PACKAGE_ZLIB=ON \
             -DCURL_BROTLI=OFF \
             -DCURL_ZSTD=OFF \
             -DUSE_NGHTTP2=OFF \
