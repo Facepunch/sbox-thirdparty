@@ -103,6 +103,8 @@ jobs:
       # these belong with it.
       # Runtime 4 also carries libssh2 headers. Disable SSH explicitly so the static
       # archive does not acquire an unshipped libssh2 dependency through auto-detection.
+      # FindOpenSSL can also set ZLIB_FOUND before curl checks CURL_ZLIB. Disable
+      # discovery itself so that does not silently re-enable content decoding.
       # Static libcurl with the OpenSSL backend, linked against the OpenSSL built above and
       # shipped beside it. engine2.build.cs takes libssl and libcrypto out of
       # src/thirdparty/libcurl/lib/<plat>/ to match.
@@ -132,6 +134,7 @@ jobs:
             -DCURL_DISABLE_MQTT=ON \
             -DCURL_DISABLE_FILE=ON \
             -DCURL_ZLIB=OFF \
+            -DCMAKE_DISABLE_FIND_PACKAGE_ZLIB=ON \
             -DCURL_BROTLI=OFF \
             -DCURL_ZSTD=OFF \
             -DUSE_NGHTTP2=OFF \
