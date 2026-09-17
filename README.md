@@ -12,7 +12,7 @@ Versions below are each workflow's default; what sbox actually consumes is pinne
 |---------|---------|---------|
 | [dav1d](https://code.videolan.org/videolan/dav1d) | 1.5.3 | AV1 decoder |
 | [SVT-AV1](https://gitlab.com/AOMediaCodec/SVT-AV1) | v4.1.0 | AV1 encoder |
-| [libvpx](https://github.com/webmproject/libvpx) | v1.16.0 | VP9 codec |
+| [libvpx](https://github.com/webmproject/libvpx) | v1.16.0 | VP9 codec, VP8 decoder |
 | [libopus](https://github.com/xiph/opus) | v1.5.2 | Opus codec |
 | [libwebp](https://chromium.googlesource.com/webm/libwebp) | v1.5.0 | WebP decode/encode |
 | [libwebm](https://github.com/webmproject/libwebm) | 1.0.0.32 | WebM/MKV demuxer |
