@@ -32,8 +32,12 @@ Versions below are each workflow's default; what sbox actually consumes is pinne
 | [sentry-native](https://github.com/getsentry/sentry-native) | 0.11.3 | Crash reporting |
 | [openxr-loader](https://github.com/KhronosGroup/OpenXR-SDK) | release-1.1.43 | OpenXR loader and headers |
 | [qt5](https://github.com/Facepunch/qt) | master | Tools UI, our fork |
+| [lavapipe](https://gitlab.freedesktop.org/mesa/mesa) | 26.2.4 | Software Vulkan driver for the render tests (Mesa, static LLVM 21.1.0) |
 
 `compressonator` also builds here but is not consumed by sbox yet.
+
+`lavapipe` is a Vulkan driver, not a library sbox links: sbox's `render-tests` verb downloads
+it on its own, outside `RemoteDeps.cs`, so it never lands in `game/bin`.
 
 Not built here: `fbx`, `nvidia`, `ovrlipsync` and `superluminal`, which are vendor SDKs
 with no buildable source, and `FidelityFX-FSR3` and `etc2comp`, whose sources are
@@ -60,6 +64,7 @@ Most libraries build all four. The exceptions, and why:
 |---------|-----------|---------|
 | `oidn` | win64, linux64, osxarm64 | 1.x has no Linux ARM neural runtime (vendored oneDNN is x64 JIT). 2.x reworks the device API `vrad3` uses. |
 | `sentry-native` | win64 | sbox only builds the crash handler on Windows. |
+| `lavapipe` | win64 | sbox only runs its render tests on the Windows CI job. |
 
 ## Triggering a build
 

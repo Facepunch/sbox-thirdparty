@@ -1,0 +1,174 @@
+name: Build lavapipe
+
+# Lavapipe, Mesa's software Vulkan driver. sbox's render tests run SceneLab on it, so they need
+# no GPU. It's a Vulkan ICD, not a library sbox links: the release holds vulkan_lvp.dll and the
+# lvp_icd.json manifest that points the Vulkan loader at it, and sbox's render-tests verb
+# fetches it on its own rather than through RemoteDeps, so it never lands in game/bin.
+#
+# LLVM is built here and linked statically, so the driver has no LLVM dependency of its own.
+# Both are built /MT so the DLL needs no VC++ runtime installed beside it. The golds in sbox's
+# engine/Tests/Baselines/Windows.Vulkan/Lavapipe are this build's pixels: a new Mesa or LLVM
+# version can render differently, so bump the version there and regenerate them together.
+#
+# Windows only for now: the render tests only run on the Windows CI job.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lib_version:
+        description: 'Mesa version (e.g. 26.2.4, built from the mesa-26.2.4 tag)'
+        required: true
+        default: '26.2.4'
+  push:
+    tags: ['lavapipe-*']
+
+env:
+  LLVM_VERSION: '21.1.0'
+  GLSLANG_VERSION: '16.5.0'
+  WINFLEXBISON_VERSION: '2.5.25'
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      lib_version: ${{ steps.ver.outputs.lib_version }}
+      release_tag: ${{ steps.ver.outputs.release_tag }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${{ github.ref_name }}"; V="${V#lavapipe-}"
+          else
+            V="${{ inputs.lib_version }}"
+          fi
+          echo "lib_version=$V" >> $GITHUB_OUTPUT
+          echo "release_tag=lavapipe-$V" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, platform: win64 }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform }}
+    timeout-minutes: 240
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-msvc
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Mesa builds with meson and generates code with mako. Lavapipe's ray tracing support compiles
+      # GLSL with glslangValidator, and the gallium side needs flex and bison.
+      - name: Install build tools
+        shell: pwsh
+        run: |
+          python -m pip install meson==1.10.1 ninja==1.13.0 mako==1.3.10 pyyaml==6.0.3 packaging==25.0
+          $tools = "$env:RUNNER_TEMP\tools"
+          New-Item -ItemType Directory -Force $tools | Out-Null
+          Invoke-WebRequest "https://github.com/KhronosGroup/glslang/releases/download/$env:GLSLANG_VERSION/glslang-$env:GLSLANG_VERSION-windows-x86_64-release.zip" -OutFile "$tools\glslang.zip"
+          Expand-Archive "$tools\glslang.zip" "$tools\glslang"
+          Invoke-WebRequest "https://github.com/lexxmark/winflexbison/releases/download/v$env:WINFLEXBISON_VERSION/win_flex_bison-$env:WINFLEXBISON_VERSION.zip" -OutFile "$tools\winflexbison.zip"
+          Expand-Archive "$tools\winflexbison.zip" "$tools\winflexbison"
+          # glslang 16 ships only glslang.exe; Mesa looks for it by its old name
+          $glslang = Split-Path ( Get-ChildItem "$tools\glslang" -Recurse -Filter glslang.exe | Select-Object -First 1 ).FullName
+          Copy-Item "$glslang\glslang.exe" "$glslang\glslangValidator.exe"
+          Add-Content $env:GITHUB_PATH $glslang
+          Add-Content $env:GITHUB_PATH "$tools\winflexbison"
+
+      - name: Clone LLVM ${{ env.LLVM_VERSION }} and Mesa ${{ needs.setup.outputs.lib_version }}
+        run: |
+          git clone --depth 1 --branch llvmorg-${{ env.LLVM_VERSION }} https://github.com/llvm/llvm-project.git llvm-src
+          git clone --depth 1 --branch mesa-${{ needs.setup.outputs.lib_version }} https://gitlab.freedesktop.org/mesa/mesa.git mesa-src
+
+      # Only what Mesa's JIT and its meson LLVM lookup need: the host target, no tools beyond
+      # llvm-config, no tests.
+      - name: Build LLVM
+        shell: pwsh
+        run: |
+          cmake -S llvm-src\llvm -B llvm-build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\llvm" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DLLVM_TARGETS_TO_BUILD=X86 `
+            -DLLVM_ENABLE_PROJECTS= `
+            -DLLVM_ENABLE_ASSERTIONS=OFF `
+            -DLLVM_ENABLE_ZLIB=OFF `
+            -DLLVM_ENABLE_ZSTD=OFF `
+            -DLLVM_ENABLE_LIBXML2=OFF `
+            -DLLVM_ENABLE_DIA_SDK=OFF `
+            -DLLVM_BUILD_LLVM_DYLIB=OFF `
+            -DLLVM_INCLUDE_TESTS=OFF `
+            -DLLVM_INCLUDE_EXAMPLES=OFF `
+            -DLLVM_INCLUDE_BENCHMARKS=OFF `
+            -DLLVM_INCLUDE_DOCS=OFF
+          cmake --build llvm-build --target install
+
+      # The driver alone: no OpenGL, no other drivers, no video. Warnings are errors in a release
+      # build, and C4189 fires on variables only asserts read. Meson asks CMake for the newest LLVM
+      # it can find first, so point it at ours, and remove the runner image's own LLVM CMake
+      # package, which would otherwise win.
+      - name: Build lavapipe
+        shell: pwsh
+        working-directory: mesa-src
+        run: |
+          $env:PYTHONUTF8 = '1'
+          $env:LLVM_CONFIG = "$env:GITHUB_WORKSPACE\llvm\bin\llvm-config.exe"
+          $env:PATH = "$env:GITHUB_WORKSPACE\llvm\bin;$env:PATH"
+          if ( Test-Path 'C:\Program Files\LLVM\lib\cmake\llvm' ) { Remove-Item -Recurse -Force 'C:\Program Files\LLVM\lib\cmake\llvm' }
+          meson setup _build `
+            --buildtype=release `
+            -Db_vscrt=mt `
+            -Dc_args=/wd4189 `
+            -Dcpp_args=/wd4189 `
+            -Dcmake_prefix_path="$env:GITHUB_WORKSPACE\llvm" `
+            -Dvulkan-drivers=swrast `
+            -Dgallium-drivers=llvmpipe `
+            -Dplatforms=windows `
+            -Dllvm=enabled `
+            -Dshared-llvm=disabled `
+            -Dglx=disabled `
+            -Degl=disabled `
+            -Dopengl=false `
+            -Dgles1=disabled `
+            -Dgles2=disabled `
+            -Dgallium-extra-hud=false `
+            -Dvideo-codecs= `
+            -Dbuild-tests=false
+          if ( $LASTEXITCODE -ne 0 ) { throw "meson setup failed" }
+          meson compile -C _build src/gallium/targets/lavapipe/vulkan_lvp:shared_library src/gallium/targets/lavapipe/lvp_devenv_icd:custom
+          if ( $LASTEXITCODE -ne 0 ) { throw "meson compile failed" }
+
+      # The manifest takes its API version from the one Mesa generates for running from the build
+      # tree, with the library path made relative to the manifest. The Windows loader needs a
+      # backslash there: with ./vulkan_lvp.dll it loads the DLL, then every call fails.
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          $dll = Get-ChildItem mesa-src\_build -Recurse -Filter vulkan_lvp.dll | Select-Object -First 1
+          if ( -not $dll ) { throw "vulkan_lvp.dll missing from the build" }
+          Copy-Item $dll.FullName out\
+          $api = ( Get-Content mesa-src\_build\src\gallium\targets\lavapipe\lvp_devenv_icd.x86_64.json -Raw | ConvertFrom-Json ).ICD.api_version
+          Set-Content -Path out\lvp_icd.json -NoNewline -Value ( '{"file_format_version":"1.0.0","ICD":{"library_path":".\\vulkan_lvp.dll","api_version":"' + $api + '"}}' )
+          Set-Content -Path out\VERSION -Value ( "Mesa $( ( Get-Content mesa-src\VERSION -Raw ).Trim() ) $( git -C mesa-src rev-parse HEAD )`nLLVM $env:LLVM_VERSION`nMSVC $env:VCToolsVersion" )
+          Get-Content out\lvp_icd.json, out\VERSION
+          Compress-Archive -Path out\* -DestinationPath "lavapipe-${{ needs.setup.outputs.lib_version }}-${{ matrix.platform }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lavapipe-${{ matrix.platform }}
+          path: lavapipe-${{ needs.setup.outputs.lib_version }}-${{ matrix.platform }}.zip
+
+  release:
+    needs: [setup, build]
+    uses: ./.github/workflows/_release.yml
+    with:
+      release_tag: ${{ needs.setup.outputs.release_tag }}
+      display_name: "lavapipe ${{ needs.setup.outputs.lib_version }}"
