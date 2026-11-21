@@ -22,7 +22,7 @@ Versions below are each workflow's default; what sbox actually consumes is pinne
 | [SDL3](https://github.com/libsdl-org/SDL) | 2a623fd2 | Windowing, input, audio |
 | [embree](https://github.com/embree/embree) | v3.13.5 | CPU raytracing |
 | [ispc_texcomp](https://github.com/GameTechDev/ISPCTextureCompressor) | master | BC6H/ASTC/BC1/BC3 compression |
-| [bc7enc](https://github.com/BinomialLLC/bc7e) | main | BC7 compression |
+| [bc7enc](https://github.com/richgel999/bc7enc_rdo) | b9438627 | BC7E compression |
 | [glslang](https://github.com/KhronosGroup/glslang) | 14.3.0 | SPVRemapper, plus the SPIRV-Tools it builds as a subproject |
 | [slang](https://github.com/shader-slang/slang) | v2026.14 | Slang shader compiler |
 | [dxc](https://github.com/microsoft/DirectXShaderCompiler) | v1.9.2607 | HLSL preprocessing |
@@ -98,6 +98,10 @@ sbox's `engine/Tools/SboxBuild/Native/RemoteDeps.cs` so cached checkouts fetch t
 - **qt5** builds [Facepunch/qt](https://github.com/Facepunch/qt), never upstream Qt. Our
   patches are marked `s&box:`. It needs an LFS checkout and packages by hand, since Qt has
   to keep its `bin/` host tools and `plugins/` tree as a directory layout.
-- **bc7enc** is bc7e plus a wrapper in `shims/` providing the entry points sbox resolves.
+- **bc7enc** builds the BC7E ISPC kernel from `richgel999/bc7enc_rdo`, pinned by commit,
+  plus a wrapper in `shims/` providing the entry points sbox resolves. It does not build
+  upstream's RDO executable; sbox owns the RDO integration. The original `BinomialLLC/bc7e`
+  repository is archived. Publish the new commit-tagged package before updating sbox's
+  `RemoteDeps.cs` version; the old `bc7enc-main` release remains usable by existing checkouts.
 
 Anything more specific is commented in the workflow that needs it.

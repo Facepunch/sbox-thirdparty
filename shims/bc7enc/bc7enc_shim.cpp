@@ -6,7 +6,7 @@
 //   GetProfile_BC7
 //   CompressBlocks
 //
-// They forward to BinomialLLC/bc7e's ISPC kernel. The profile values match
+// They forward to the BC7E ISPC kernel in richgel999/bc7enc_rdo. The profile values match
 // BC7_CompressionProfile_t in src/bitmap/ispc_compressor_loader.h, and
 // bc7e_compress_block_params is declared there field for field, so the struct crosses the
 // boundary by layout - do not reorder it on either side.
@@ -14,6 +14,14 @@
 #include "bc7e_ispc.h"
 
 #include <stdint.h>
+#include <stddef.h>
+
+// sbox declares this struct independently; an upstream ABI change requires a coordinated update.
+static_assert( sizeof( ispc::bc7e_compress_block_params ) == 124, "BC7E params size changed" );
+static_assert( offsetof( ispc::bc7e_compress_block_params, m_weights ) == 32, "BC7E weights moved" );
+static_assert( offsetof( ispc::bc7e_compress_block_params, m_perceptual ) == 72, "BC7E flags moved" );
+static_assert( offsetof( ispc::bc7e_compress_block_params, m_opaque_settings ) == 76, "BC7E opaque settings moved" );
+static_assert( offsetof( ispc::bc7e_compress_block_params, m_alpha_settings ) == 96, "BC7E alpha settings moved" );
 
 #if defined( _WIN32 )
 	#define BC7ENC_EXPORT extern "C" __declspec( dllexport )
