@@ -78,11 +78,16 @@ jobs:
 
       - uses: ./.github/actions/setup-msvc
         if: runner.os == 'Windows'
+        with:
+          # C ABI DLL; keep its runtime requirement below the engine's toolset.
+          toolset: '14.44.35207'
 
       - name: Clone bc7e ${{ needs.setup.outputs.lib_version }}
         run: |
           git clone https://github.com/richgel999/bc7enc_rdo src
           git -C src checkout ${{ needs.setup.outputs.lib_version }}
+          # Work around ISPC's unsigned decrement bug (bc7enc_rdo#29).
+          git -C src apply ../shims/bc7enc/unsigned-decrement.patch
 
       - name: Install ISPC ${{ needs.setup.outputs.ispc_version }} (Unix)
         if: runner.os != 'Windows'

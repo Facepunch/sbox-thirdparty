@@ -103,5 +103,7 @@ sbox's `engine/Tools/SboxBuild/Native/RemoteDeps.cs` so cached checkouts fetch t
   upstream's RDO executable; sbox owns the RDO integration. The original `BinomialLLC/bc7e`
   repository is archived. Publish the new commit-tagged package before updating sbox's
   `RemoteDeps.cs` version; the old `bc7enc-main` release remains usable by existing checkouts.
+  The build applies the unsigned-decrement workaround from upstream PR #29 for ARM targets.
+  Its C ABI DLL uses MSVC 14.44 to keep the runtime requirement below the engine's toolset.
 
 Anything more specific is commented in the workflow that needs it.
